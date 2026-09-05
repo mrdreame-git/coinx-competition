@@ -90,7 +90,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urlib.request; urlib.request.urlopen('http://127.0.0.1:3000/health')"
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health')"
         ]
       interval: 10s
       timeout: 5s
