@@ -1,58 +1,96 @@
-"use client"
+'use client'
 
-import { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
-import { ROUTES } from "@/config/app"
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { MagnifyingGlass } from '@phosphor-icons/react'
+import { ROUTES } from '@/config/app'
+import { useLiveTickers } from '@/lib/binance/hooks'
+import { formatPrice } from '@/lib/format'
+import ChangeTag from '@/components/common/ChangeTag'
 
 interface PaletteItem {
+  id: string
   label: string
+  meta: string
   section: string
-  action: () => void
+  /** Extra tokens that should match the query. */
   keywords: string[]
+  run: () => void
 }
+
+const PAGE_ITEMS: { label: string; meta: string; route: string; keywords: string[] }[] = [
+  { label: 'Dashboard', meta: 'Overview', route: ROUTES.dashboard, keywords: ['home', 'account', 'summary'] },
+  { label: 'Markets', meta: 'All contracts', route: ROUTES.markets, keywords: ['trade', 'prices', 'tickers'] },
+  { label: 'Competitions', meta: 'Browse rounds', route: ROUTES.competitions, keywords: ['challenge', 'round', 'enter'] },
+  { label: 'Leaderboard', meta: 'Live ranking', route: ROUTES.leaderboard, keywords: ['rank', 'top', 'standings'] },
+  { label: 'Wallet', meta: 'Balance and transfers', route: ROUTES.wallet, keywords: ['deposit', 'withdraw', 'balance'] },
+  { label: 'Notifications', meta: 'Alerts', route: ROUTES.notifications, keywords: ['messages', 'alerts'] },
+  { label: 'Profile', meta: 'Security and preferences', route: ROUTES.profile, keywords: ['account', 'settings', '2fa'] },
+]
 
 export default function CommandPalette() {
   const router = useRouter()
+  const { tickers } = useLiveTickers()
   const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const items: PaletteItem[] = [
-    { label: "Dashboard", section: "Navigation", action: () => router.push(ROUTES.dashboard), keywords: ["home", "main"] },
-    { label: "Markets", section: "Navigation", action: () => router.push(ROUTES.markets), keywords: ["trade", "list", "all"] },
-    { label: "Competitions", section: "Navigation", action: () => router.push(ROUTES.competitions), keywords: ["compete", "challenge"] },
-    { label: "Leaderboard", section: "Navigation", action: () => router.push(ROUTES.leaderboard), keywords: ["rank", "top"] },
-    { label: "Wallet", section: "Navigation", action: () => router.push(ROUTES.wallet), keywords: ["balance", "deposit", "withdraw"] },
-    { label: "Notifications", section: "Navigation", action: () => router.push(ROUTES.notifications), keywords: ["alerts", "messages"] },
-    { label: "Profile", section: "Navigation", action: () => router.push(ROUTES.profile), keywords: ["account", "settings"] },
-    { label: "BTC / USDT", section: "Markets", action: () => router.push(ROUTES.marketDetail("BTC")), keywords: ["bitcoin", "btc"] },
-    { label: "ETH / USDT", section: "Markets", action: () => router.push(ROUTES.marketDetail("ETH")), keywords: ["ethereum", "eth"] },
-    { label: "SOL / USDT", section: "Markets", action: () => router.push(ROUTES.marketDetail("SOL")), keywords: ["solana"] },
-    { label: "BNB / USDT", section: "Markets", action: () => router.push(ROUTES.marketDetail("BNB")), keywords: ["bnb", "binance"] },
-  ]
+  const items = useMemo<PaletteItem[]>(() => {
+    const pages = PAGE_ITEMS.map<PaletteItem>((item) => ({
+      id: `page-${item.label.toLowerCase()}`,
+      label: item.label,
+      meta: item.meta,
+      section: 'Pages',
+      keywords: item.keywords,
+      run: () => router.push(item.route),
+    }))
 
-  const filtered = query
-    ? items.filter(
-        (i) =>
-          i.label.toLowerCase().includes(query.toLowerCase()) ||
-          i.keywords.some((k) => k.includes(query.toLowerCase()))
-      )
-    : items
+    const markets = tickers.map<PaletteItem>((ticker) => ({
+      id: `market-${ticker.symbol}`,
+      label: ticker.pair,
+      meta: formatPrice(ticker.price),
+      section: 'Markets',
+      keywords: [ticker.base.toLowerCase(), ticker.name.toLowerCase(), 'usdt'],
+      run: () => router.push(ROUTES.marketDetail(ticker.base)),
+    }))
 
+    return [...pages, ...markets]
+  }, [router, tickers])
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return items
+    return items.filter(
+      (item) =>
+        item.label.toLowerCase().includes(needle) ||
+        item.meta.toLowerCase().includes(needle) ||
+        item.keywords.some((keyword) => keyword.includes(needle)),
+    )
+  }, [items, query])
+
+  const close = useCallback(() => {
+    setOpen(false)
+    setQuery('')
+    setSelected(0)
+  }, [])
+
+  /* Global open shortcut. */
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault()
-        setOpen((prev) => !prev)
-        setQuery("")
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setOpen((prev) => {
+          if (prev) setQuery('')
+          return !prev
+        })
         setSelected(0)
       }
-      if (e.key === "Escape") setOpen(false)
+      if (event.key === 'Escape') close()
     }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [close])
 
   useEffect(() => {
     if (open) inputRef.current?.focus()
@@ -62,112 +100,118 @@ export default function CommandPalette() {
     setSelected(0)
   }, [query])
 
+  /* Arrow and enter handling only while the dialog is open. */
   useEffect(() => {
     if (!open) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setSelected((s) => (s + 1) % filtered.length)
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setSelected((s) => (s - 1 + filtered.length) % filtered.length)
-      } else if (e.key === "Enter" && filtered[selected]) {
-        filtered[selected].action()
-        setOpen(false)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (filtered.length === 0) return
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSelected((index) => (index + 1) % filtered.length)
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelected((index) => (index - 1 + filtered.length) % filtered.length)
+      } else if (event.key === 'Enter') {
+        event.preventDefault()
+        const item = filtered[selected]
+        if (item) {
+          item.run()
+          close()
+        }
       }
     }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [open, filtered, selected])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, filtered, selected, close])
 
   if (!open) return null
 
-  const sections = [...new Set(filtered.map((i) => i.section))]
+  const sections = [...new Set(filtered.map((item) => item.section))]
+  let flatIndex = -1
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center pt-[20vh]"
-      style={{ background: "rgba(8,13,24,0.8)" }}
-      onClick={() => setOpen(false)}
+      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[14vh]"
+      style={{ backgroundColor: 'rgba(8, 9, 11, 0.72)' }}
+      onClick={close}
     >
       <div
-        className="w-full max-w-lg rounded-2xl overflow-hidden"
-        style={{
-          background: "rgba(12,19,32,0.98)",
-          border: "1px solid rgba(255,255,255,0.1)",
-          backdropFilter: "blur(20px)",
-          boxShadow: "0 25px 80px rgba(0,0,0,0.5)",
-        }}
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search COINX"
+        className="panel-glass w-full max-w-xl overflow-hidden"
+        onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center gap-3 px-5 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A4AEC0" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+        <div className="flex items-center gap-3 border-b border-line px-4 py-3.5">
+          <MagnifyingGlass size={15} className="shrink-0 text-ink-3" aria-hidden />
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Jump to…"
-            className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "#FFFFFF" }}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search markets and pages"
+            aria-label="Search markets and pages"
+            className="flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
           />
-          <span
-            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-            style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#A4AEC0" }}
-          >
-            ESC
-          </span>
+          <kbd className="num rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-3">
+            Esc
+          </kbd>
         </div>
 
-        <div className="max-h-80 overflow-y-auto py-2">
+        <div className="max-h-[52vh] overflow-y-auto py-1.5">
+          {filtered.length === 0 && (
+            <p className="px-4 py-10 text-center text-[13px] text-ink-2">
+              Nothing matches &ldquo;{query}&rdquo;. Try a symbol such as BTC, or a page name.
+            </p>
+          )}
+
           {sections.map((section) => (
             <div key={section}>
-              <div
-                className="px-5 py-1.5 text-[10px] font-mono tracking-widest uppercase"
-                style={{ color: "#A4AEC0" }}
-              >
-                {section}
-              </div>
+              <p className="label px-4 pb-1.5 pt-3">{section}</p>
               {filtered
-                .filter((i) => i.section === section)
+                .filter((item) => item.section === section)
                 .map((item) => {
-                  const idx = filtered.indexOf(item)
+                  flatIndex += 1
+                  const index = flatIndex
+                  const active = index === selected
                   return (
                     <button
-                      key={item.label}
+                      key={item.id}
+                      type="button"
+                      onMouseEnter={() => setSelected(index)}
                       onClick={() => {
-                        item.action()
-                        setOpen(false)
+                        item.run()
+                        close()
                       }}
-                      className="w-full text-left px-5 py-2.5 text-sm flex items-center gap-3 transition-colors"
-                      style={{
-                        color: idx === selected ? "#FFFFFF" : "#E5EAF3",
-                        background: idx === selected ? "rgba(22,119,255,0.12)" : "transparent",
-                      }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                      style={{ backgroundColor: active ? 'var(--color-accent-soft)' : undefined }}
                     >
-                      <span>{item.label}</span>
+                      <span
+                        className="flex-1 truncate text-[13px]"
+                        style={{ color: active ? 'var(--color-ink)' : 'var(--color-ink-2)' }}
+                      >
+                        {item.label}
+                      </span>
+                      {item.section === 'Markets' ? (
+                        <span className="flex items-center gap-2.5">
+                          <span className="num text-[12px] text-ink-2">{item.meta}</span>
+                          {(() => {
+                            const ticker = tickers.find((t) => `market-${t.symbol}` === item.id)
+                            return ticker ? <ChangeTag value={ticker.changePct} size="sm" caret={false} /> : null
+                          })()}
+                        </span>
+                      ) : (
+                        <span className="text-[11.5px] text-ink-3">{item.meta}</span>
+                      )}
                     </button>
                   )
                 })}
             </div>
           ))}
-
-          {filtered.length === 0 && (
-            <div className="py-8 text-center text-sm" style={{ color: "#A4AEC0" }}>
-              No results found.
-            </div>
-          )}
         </div>
 
-        <div
-          className="px-5 py-2.5 flex items-center gap-4 text-[10px] font-mono"
-          style={{ borderTop: "1px solid rgba(255,255,255,0.06)", color: "#A4AEC0" }}
-        >
-          <span>↑↓ Navigate</span>
-          <span>↵ Select</span>
-          <span>ESC Close</span>
+        <div className="flex items-center gap-4 border-t border-line px-4 py-2.5 text-[10.5px] uppercase tracking-[0.12em] text-ink-3">
+          <span>Up and down to move</span>
+          <span>Enter to open</span>
         </div>
       </div>
     </div>

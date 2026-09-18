@@ -1,131 +1,184 @@
-"use client"
+'use client'
 
-import Image from "next/image"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { ROUTES } from "@/config/app"
-import { useAuth } from "@/features/auth/auth-context"
+import Image from 'next/image'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { useState } from 'react'
+import { BellSimple, List, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { ROUTES } from '@/config/app'
+import { useAuth } from '@/features/auth/auth-context'
+import { useLiveTicker } from '@/lib/binance/hooks'
+import { formatPrice } from '@/lib/format'
+import ChangeTag from '@/components/common/ChangeTag'
 
 interface HeaderProps {
   active?: string
   notifCount?: number
 }
 
-const NAV_ITEMS: { label: string; route: string }[] = [
-  { label: "Dashboard", route: ROUTES.dashboard },
-  { label: "Markets", route: ROUTES.markets },
-  { label: "Competitions", route: ROUTES.competitions },
-  { label: "Wallet", route: ROUTES.wallet },
-  { label: "Leaderboard", route: ROUTES.leaderboard },
+const NAV_ITEMS = [
+  { label: 'Dashboard', route: ROUTES.dashboard },
+  { label: 'Markets', route: ROUTES.markets },
+  { label: 'Competitions', route: ROUTES.competitions },
+  { label: 'Leaderboard', route: ROUTES.leaderboard },
+  { label: 'Wallet', route: ROUTES.wallet },
 ]
 
-export default function Header({ active, notifCount = 2 }: HeaderProps) {
-  const pathname = usePathname()
-  const { user } = useAuth()
-  const current = active ?? pathname
+/** Opens the command palette by replaying its shortcut, so entry points stay in one place. */
+function openPalette() {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))
+}
 
-  const isActive = (route: string) => {
-    if (route === ROUTES.dashboard) return current === route
-    return current.startsWith(route)
+function BtcChip() {
+  const { ticker } = useLiveTicker('BTC')
+
+  if (!ticker) {
+    return <span className="skeleton hidden h-7 w-40 xl:block" />
   }
 
   return (
-    <header
-      className="sticky top-0 z-50"
-      style={{
-        background: "rgba(8,13,24,0.85)",
-        backdropFilter: "blur(16px)",
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-      }}
-    >
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center gap-8">
-        <Link href={ROUTES.landing} className="flex items-center gap-2 shrink-0">
+    <div className="hidden items-center gap-2.5 rounded-control border border-line bg-surface px-3 py-1.5 xl:flex">
+      <span className="text-[11px] font-semibold tracking-wide text-ink-2">BTC</span>
+      <span className="num text-[12px] text-ink">{formatPrice(ticker.price)}</span>
+      <ChangeTag value={ticker.changePct} size="sm" caret={false} />
+    </div>
+  )
+}
+
+export default function Header({ active, notifCount = 0 }: HeaderProps) {
+  const pathname = usePathname()
+  const { user } = useAuth()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const current = active ?? pathname ?? ''
+
+  const isActive = (route: string) =>
+    route === ROUTES.dashboard ? current === route : current.startsWith(route)
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-line bg-void/85 backdrop-blur-xl">
+      <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-6 px-4 lg:px-6">
+        <Link href={ROUTES.landing} className="shrink-0" aria-label="COINX home">
           <Image
             src="/coinx-logo-long.png"
             alt="COINX"
-            width={110}
-            height={20}
-            priority
-            style={{ width: "110px", height: "auto" }}
+            width={104}
+            height={19}
+            preload
+            style={{ width: 104, height: 'auto' }}
           />
         </Link>
-        <nav className="flex items-center gap-1 flex-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.label}
-              href={item.route}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
-              style={{
-                color: isActive(item.route) ? "#00C8FF" : "#A4AEC0",
-                background: isActive(item.route) ? "rgba(0,200,255,0.08)" : "transparent",
-              }}
-            >
-              {item.label}
-            </Link>
-          ))}
+
+        <nav aria-label="Primary" className="hidden items-center gap-0.5 lg:flex">
+          {NAV_ITEMS.map((item) => {
+            const selected = isActive(item.route)
+            return (
+              <Link
+                key={item.label}
+                href={item.route}
+                aria-current={selected ? 'page' : undefined}
+                className="rounded-control px-3 py-2 text-[13px] font-medium transition-colors"
+                style={{
+                  color: selected ? 'var(--color-accent)' : 'var(--color-ink-2)',
+                  backgroundColor: selected ? 'rgba(95, 168, 255, 0.1)' : 'transparent',
+                }}
+              >
+                {item.label}
+              </Link>
+            )
+          })}
         </nav>
-        <div className="flex items-center gap-3">
+
+        <div className="ml-auto flex items-center gap-2">
+          <BtcChip />
+
           <button
-            onClick={() => {
-              window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }))
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono transition-colors"
-            style={{
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#A4AEC0",
-            }}
+            type="button"
+            onClick={openPalette}
+            className="hidden items-center gap-2 rounded-control border border-line-strong px-2.5 py-2 text-[12px] text-ink-3 transition-colors hover:border-accent hover:text-accent md:flex"
+            aria-label="Search markets and pages"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <span>Jump to…</span>
-            <span
-              className="px-1 py-0.5 rounded text-[10px]"
-              style={{ border: "1px solid rgba(255,255,255,0.1)", color: "#A4AEC0" }}
-            >
-              ⌘K
-            </span>
+            <MagnifyingGlass size={13} aria-hidden />
+            <span className="hidden xl:inline">Search</span>
+            <kbd className="num rounded border border-line px-1 text-[10px] text-ink-3">
+              Ctrl K
+            </kbd>
           </button>
+
           <Link
             href={ROUTES.notifications}
-            className="relative w-9 h-9 rounded-xl flex items-center justify-center transition-colors hover:bg-white/5"
-            style={{ border: "1px solid rgba(255,255,255,0.08)" }}
-            aria-label="Notifications"
+            aria-label={
+              notifCount > 0 ? `Notifications, ${notifCount} unread` : 'Notifications'
+            }
+            className="relative flex size-9 items-center justify-center rounded-control border border-line-strong text-ink-2 transition-colors hover:border-accent hover:text-accent"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#A4AEC0"
-              strokeWidth="2"
-            >
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
+            <BellSimple size={16} aria-hidden />
             {notifCount > 0 && (
-              <div
-                className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs font-bold flex items-center justify-center"
-                style={{ background: "#FF4D67", color: "white" }}
+              <span
+                className="num absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-pill text-[9px] font-bold text-white"
+                style={{ backgroundColor: 'var(--color-short)' }}
               >
                 {notifCount}
-              </div>
+              </span>
             )}
           </Link>
+
           <Link
             href={ROUTES.profile}
-            className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm"
-            style={{
-              background: "linear-gradient(135deg, #2563EB, #6D4AFF)",
-              color: "white",
-            }}
-            aria-label="Profile"
+            aria-label="Your profile"
+            className="flex size-9 items-center justify-center rounded-control text-[13px] font-bold text-white"
+            style={{ backgroundColor: 'var(--color-accent-deep)' }}
           >
             {user.initial}
           </Link>
+
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-expanded={menuOpen}
+            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+            className="flex size-9 items-center justify-center rounded-control border border-line-strong text-ink-2 lg:hidden"
+          >
+            {menuOpen ? <X size={16} aria-hidden /> : <List size={16} aria-hidden />}
+          </button>
         </div>
       </div>
+
+      {menuOpen && (
+        <nav
+          aria-label="Primary mobile"
+          className="border-t border-line bg-surface px-4 py-3 lg:hidden"
+        >
+          <ul className="flex flex-col">
+            {NAV_ITEMS.map((item) => {
+              const selected = isActive(item.route)
+              return (
+                <li key={item.label}>
+                  <Link
+                    href={item.route}
+                    onClick={() => setMenuOpen(false)}
+                    aria-current={selected ? 'page' : undefined}
+                    className="block rounded-control px-3 py-2.5 text-sm font-medium"
+                    style={{ color: selected ? 'var(--color-accent)' : 'var(--color-ink-2)' }}
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+          <button
+            type="button"
+            onClick={() => {
+              setMenuOpen(false)
+              openPalette()
+            }}
+            className="btn btn-ghost mt-2 w-full py-2.5"
+          >
+            <MagnifyingGlass size={13} aria-hidden />
+            Search markets
+          </button>
+        </nav>
+      )}
     </header>
   )
 }

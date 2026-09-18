@@ -1,380 +1,317 @@
-"use client"
+'use client'
 
-import { useState } from "react"
-import Header from "@/components/layout/Header"
-import { COMPETITIONS } from "@/mocks/competitions"
-import { LEADERBOARD_DATA } from "@/mocks/leaderboard"
-import { MARKETS, TRADE_LOG_ENTRIES } from "@/mocks/markets"
-import { formatPercentage } from "@/lib/format"
+import { useMemo, useState } from 'react'
+import Link from 'next/link'
+import { ArrowRight, ChartBar, Pulse, TrendDown, TrendUp } from '@phosphor-icons/react'
+import { ROUTES } from '@/config/app'
+import { COMPETITIONS } from '@/mocks/competitions'
+import { LEADERBOARD_DATA } from '@/mocks/leaderboard'
+import { MARKET_SYMBOLS } from '@/lib/binance/symbols'
+import { useLiveTickers } from '@/lib/binance/hooks'
+import { formatNumber, formatPct, formatPrice, formatUsd } from '@/lib/format'
+import Header from '@/components/layout/Header'
+import LeaderboardTable, { PodiumCard } from '@/components/common/LeaderboardTable'
+import ChangeTag from '@/components/common/ChangeTag'
+import { ErrorState, Skeleton } from '@/components/common/StatePanel'
 
-type View = "boardA" | "boardB"
+/** Positioning shares are competition aggregates, not live exchange data. */
+const POSITIONING = [
+  { base: 'BTC', longPct: 72 },
+  { base: 'ETH', longPct: 58 },
+  { base: 'SOL', longPct: 41 },
+  { base: 'BNB', longPct: 68 },
+]
 
-const POSITIONING = {
-  longPct: "64%",
-  shortPct: "36%",
-  longWidth: "64%",
-  symbols: [
-    { k: "BTC", longPct: "72%", longWidth: "72%" },
-    { k: "ETH", longPct: "58%", longWidth: "58%" },
-    { k: "SOL", longPct: "41%", longWidth: "41%" },
-    { k: "BNB", longPct: "68%", longWidth: "68%" },
-  ],
-}
+const TRADE_LOG = [
+  { time: '16:42', trader: 'CryptoKing', action: 'Buy', base: 'BTC' },
+  { time: '16:41', trader: 'Alpha_X', action: 'Sell', base: 'ETH' },
+  { time: '16:40', trader: 'You', action: 'Buy', base: 'BTC' },
+  { time: '16:39', trader: 'BullRunner', action: 'Buy', base: 'SOL' },
+  { time: '16:38', trader: 'SatoshiV', action: 'Sell', base: 'BTC' },
+  { time: '16:37', trader: 'NightOwl', action: 'Buy', base: 'ETH' },
+  { time: '16:36', trader: 'MoonShot', action: 'Sell', base: 'SOL' },
+  { time: '16:35', trader: 'DigitalApe', action: 'Buy', base: 'BTC' },
+]
 
 export default function LeaderboardPage() {
-  const [comp, setComp] = useState(COMPETITIONS[0].name)
-  const [view, setView] = useState<View>("boardB")
+  const { tickers, loading, error, status, refresh } = useLiveTickers()
+  const [competitionId, setCompetitionId] = useState(COMPETITIONS[0].id)
+  const comp = COMPETITIONS.find((item) => item.id === competitionId) ?? COMPETITIONS[0]
 
-  const boardRows = LEADERBOARD_DATA.map((r, i) => {
-    let move: string
-    if (i < 3) {
-      move = `+${(((Math.sin(i * 3.77) + 1) * 0.1) + 0.5).toFixed(1)}%`
-    } else if (i < 6) {
-      move = `+${(((Math.sin(i * 5.55) + 1) * 0.11) + 0.02).toFixed(2)}%`
-    } else {
-      move = `-${(((Math.sin(i * 7.1) + 1) * 0.15)).toFixed(2)}%`
-    }
+  const podium = LEADERBOARD_DATA.slice(0, 3)
+  const you = LEADERBOARD_DATA.find((row) => row.isUser)
+
+  const aggregate = useMemo(() => {
+    const totalReturn = LEADERBOARD_DATA.reduce((sum, row) => sum + row.returnPct, 0)
+    const positive = LEADERBOARD_DATA.filter((row) => row.returnPct > 0).length
     return {
-      ...r,
-      bar: i === 0 ? "#FFB020" : i === 1 ? "#A4AEC0" : i === 2 ? "#cd7f32" : "#1677FF",
-      rowBg: r.isUser ? "linear-gradient(90deg, rgba(22,119,255,0.12), rgba(0,200,255,0.06))" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
-      book: r.isUser ? "Long" : i % 3 === 0 ? "Short" : "Long",
-      dirColor: (r.isUser || i % 3 !== 0) ? "#00D084" : "#FF4D67",
-      pnlColor: r.returnPct > 0 ? "#00D084" : "#FF4D67",
-      moveColor: i < 3 ? "#00D084" : i < 6 ? "#FFB020" : "#FF4D67",
-      move,
+      average: totalReturn / LEADERBOARD_DATA.length,
+      positive,
+      total: LEADERBOARD_DATA.length,
     }
-  })
+  }, [])
 
-  const podium = [
-    {
-      rank: 1, name: "CryptoKing", sym: "BTC", dirLabel: "Long", trades: 23,
-      pnl: "+24.20", roi: "+24.2%", pnlColor: "#FFB020", bar: "#FFB020",
-    },
-    {
-      rank: 2, name: "Alpha_X", sym: "ETH", dirLabel: "Long", trades: 18,
-      pnl: "+19.80", roi: "+19.8%", pnlColor: "#A4AEC0", bar: "#A4AEC0",
-    },
-    {
-      rank: 3, name: "TraderPro", sym: "SOL", dirLabel: "Short", trades: 31,
-      pnl: "+17.40", roi: "+17.4%", pnlColor: "#cd7f32", bar: "#cd7f32",
-    },
-  ]
+  const marketTiles = useMemo(
+    () =>
+      MARKET_SYMBOLS.slice(0, 6).flatMap((meta) => {
+        const ticker = tickers.find((item) => item.base === meta.base)
+        return ticker ? [ticker] : []
+      }),
+    [tickers],
+  )
 
   return (
-    <div className="min-h-screen" style={{ background: "#080D18" }}>
+    <div className="min-h-[100dvh] bg-void">
       <Header />
 
-      {/* View Switcher */}
-      <div
-        className="flex items-center gap-3.5 px-10"
-        style={{ background: "rgba(12,19,32,0.5)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-      >
-        <span className="text-[10.5px] font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>Layout</span>
-        <div className="flex gap-px" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.06)" }}>
-          {(["boardA", "boardB"] as View[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className="px-4 py-1.5 text-sm font-bold uppercase tracking-wide transition-all"
-              style={{
-                background: view === v ? "rgba(22,119,255,0.15)" : "transparent",
-                color: view === v ? "#00C8FF" : "#A4AEC0",
-              }}
+      <main className="mx-auto max-w-[1440px] px-4 py-8 lg:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <span className="flex items-center gap-2">
+              {status === 'open' && <span className="live-pip" aria-hidden />}
+              <span
+                className="label"
+                style={{ color: error ? 'var(--color-short)' : undefined }}
+              >
+                {error
+                  ? 'Market feed offline'
+                  : status === 'open'
+                    ? 'Priced on every fill'
+                    : 'Connecting to the feed'}
+              </span>
+            </span>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+              Leaderboard
+            </h1>
+            <p className="mt-3 max-w-[60ch] text-[14px] leading-relaxed text-ink-2">
+              Ranked on percent return on the round balance, counting realised and unrealised
+              profit. Ties break on trade count, then on the entry timestamp.
+            </p>
+          </div>
+
+          <div className="w-full max-w-xs">
+            <label className="label" htmlFor="round-select">
+              Round
+            </label>
+            <select
+              id="round-select"
+              value={competitionId}
+              onChange={(event) => setCompetitionId(Number(event.target.value))}
+              className="field mt-2"
             >
-              {v === "boardA" ? "Classic" : "Showcase"}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {view === "boardB" ? (
-        <div className="px-10 py-7 space-y-5">
-          {/* Trader of the Round Header */}
-          <div
-            className="flex items-end justify-between gap-10 pb-5"
-            style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            <div>
-              <div className="flex items-center gap-3 mb-2.5">
-                <span
-                  className="inline-flex items-center gap-2 px-3 py-1"
-                  style={{ background: "#FF4D67", fontFamily: "var(--font-sans)", fontSize: "15px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase" as const, color: "#FFFFFF" }}
-                >
-                  <span className="w-2 h-2 rounded-full" style={{ background: "#FFFFFF", animation: "pulse-dot 1.5s ease-in-out infinite" }} />
-                  LIVE
-                </span>
-                <span className="text-sm font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>
-                  ROUND 12 · {LEADERBOARD_DATA.length} traders
-                </span>
-              </div>
-              <div className="font-black text-7xl tracking-tight uppercase" style={{ color: "#FFFFFF", lineHeight: 0.9 }}>
-                Trader of the Round
-              </div>
-            </div>
-            <div className="flex items-stretch glass rounded-xl overflow-hidden shrink-0">
-              <div className="px-6 py-3.5" style={{ borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-                <div className="text-xs font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>Prize pool</div>
-                <div className="font-black text-4xl font-mono" style={{ color: "#00C8FF", lineHeight: 1.05 }}>10,000</div>
-              </div>
-              <div className="px-6 py-3.5">
-                <div className="text-xs font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>Closes in</div>
-                <div className="font-black text-3xl font-mono timer-live" style={{ color: "#FFFFFF", lineHeight: 1.15 }}>47:32</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Podium */}
-          <div className="grid grid-cols-3 gap-4">
-            {podium.map((p) => (
-              <div
-                key={p.rank}
-                className="relative overflow-hidden rounded-2xl p-5"
-                style={{
-                  background: "rgba(12,19,32,0.6)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  borderTop: `4px solid ${p.bar}`,
-                }}
-              >
-                <div
-                  className="absolute -top-7 right-2 font-black"
-                  style={{ fontSize: "190px", lineHeight: 1, color: "rgba(255,255,255,0.04)" }}
-                >
-                  {p.rank}
-                </div>
-                <div className="relative flex items-center gap-2.5 mb-3 text-[13px] font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>
-                  <span className="px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#E5EAF3" }}>
-                    {p.sym}
-                  </span>
-                  <span>{p.dirLabel} · {p.trades} trades</span>
-                </div>
-                <div className="relative font-bold text-[34px] tracking-wide uppercase truncate" style={{ color: "#FFFFFF" }}>
-                  {p.name}
-                </div>
-                <div className="relative mt-4 flex items-baseline gap-3">
-                  <span className="font-mono text-3xl font-black" style={{ color: p.pnlColor }}>{p.pnl}</span>
-                  <span className="font-mono text-lg font-medium" style={{ color: p.pnlColor }}>{p.roi}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Board + Sidebar */}
-          <div className="grid" style={{ gridTemplateColumns: "1.85fr 1fr", gap: "16px", alignItems: "start" }}>
-            {/* Full Leaderboard */}
-            <div className="glass rounded-2xl overflow-hidden">
-              <div
-                className="grid items-center h-11 text-[12px] font-mono tracking-widest uppercase px-4"
-                style={{
-                  gridTemplateColumns: "90px minmax(0,1fr) 120px 200px 130px 110px",
-                  background: "rgba(255,255,255,0.02)",
-                  borderBottom: "1px solid rgba(255,255,255,0.06)",
-                  color: "#A4AEC0",
-                }}
-              >
-                <div className="px-3">Rank</div>
-                <div className="px-2">Trader</div>
-                <div className="px-2">Book</div>
-                <div className="px-2 text-right">Unrealised P&L</div>
-                <div className="px-2 text-right">ROI</div>
-                <div className="px-3 text-right">Move</div>
-              </div>
-              {boardRows.map((r) => (
-                <div
-                  key={r.rank}
-                  className="grid items-center h-[58px] px-4"
-                  style={{
-                    gridTemplateColumns: "90px minmax(0,1fr) 120px 200px 130px 110px",
-                    borderBottom: "1px solid rgba(255,255,255,0.04)",
-                    background: r.rowBg,
-                  }}
-                >
-                  <div className="px-3 flex items-center gap-2.5">
-                    <span className="w-[3px] h-6" style={{ background: r.bar }} />
-                    <span className="font-bold text-[30px]" style={{ color: "#FFFFFF" }}>{r.rank}</span>
-                  </div>
-                  <div className="px-2 font-semibold text-[30px] tracking-wide uppercase truncate" style={{ color: r.isUser ? "#00C8FF" : "#FFFFFF" }}>
-                    {r.name}
-                  </div>
-                  <div className="px-2 font-mono text-sm">
-                    <span
-                      className="px-1.5 py-1 rounded"
-                      style={{ background: "rgba(255,255,255,0.06)", color: r.dirColor }}
-                    >
-                      {r.book}
-                    </span>
-                  </div>
-                  <div className="px-2 text-right font-mono text-[26px] font-black" style={{ color: r.pnlColor }}>
-                    {formatPercentage(r.returnPct)}
-                  </div>
-                  <div className="px-2 text-right font-mono text-xl" style={{ color: r.pnlColor }}>
-                    {formatPercentage(r.returnPct)}
-                  </div>
-                  <div className="px-3 text-right font-mono text-lg font-medium" style={{ color: r.moveColor }}>
-                    {r.move}
-                  </div>
-                </div>
+              {COMPETITIONS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
               ))}
-              <div className="flex items-center justify-between px-4 py-3 text-[13px] font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>
-                <span>Showing 1–{LEADERBOARD_DATA.length} of {LEADERBOARD_DATA.length}</span>
-                <span>Ranked on unrealised + realised P&L</span>
-              </div>
-            </div>
+            </select>
+          </div>
+        </div>
 
-            {/* Sidebar */}
-            <div className="space-y-4">
-              {/* Positioning */}
-              <div className="glass rounded-2xl p-5">
-                <div className="text-[12px] font-mono tracking-widest uppercase mb-3.5" style={{ color: "#A4AEC0" }}>Positioning</div>
-                <div className="flex items-baseline justify-between font-bold text-[34px]" style={{ color: "#FFFFFF" }}>
-                  <span style={{ color: "#00D084" }}>{POSITIONING.longPct}</span>
-                  <span className="font-mono text-xs tracking-widest" style={{ color: "#A4AEC0" }}>L / S</span>
-                  <span style={{ color: "#FF4D67" }}>{POSITIONING.shortPct}</span>
-                </div>
-                <div className="flex h-3 mt-2.5 rounded-full overflow-hidden" style={{ background: "rgba(255,77,103,0.3)" }}>
-                  <div className="h-full rounded-full" style={{ width: POSITIONING.longWidth, background: "linear-gradient(90deg, #00D084, #00a866)" }} />
-                </div>
-                <div className="flex flex-col gap-2.5 mt-4">
-                  {POSITIONING.symbols.map((s) => (
-                    <div key={s.k} className="flex items-center gap-3">
-                      <span className="w-12 font-mono text-sm" style={{ color: "#C8D0DC" }}>{s.k}</span>
-                      <span className="flex-1 flex h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,77,103,0.2)" }}>
-                        <span className="h-full rounded-full" style={{ width: s.longWidth, background: "linear-gradient(90deg, #00D084, #00a866)" }} />
+        {/* Round summary strip */}
+        <dl className="mt-8 grid gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ['Prize pool', `${formatNumber(comp.prize)} USDT`],
+            ['Entrants', formatNumber(comp.players)],
+            ['Average return', formatPct(aggregate.average, 2)],
+            ['Trading higher', `${aggregate.positive} of ${aggregate.total}`],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-surface px-5 py-4">
+              <dt className="label">{label}</dt>
+              <dd className="num mt-2.5 text-[18px] font-semibold text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <div className="flex flex-col gap-6">
+            <section>
+              <h2 className="text-[15px] font-semibold text-ink">Top of the board</h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                {podium.map((row) => (
+                  <PodiumCard
+                    key={row.rank}
+                    rank={row.rank}
+                    name={row.name}
+                    returnPct={row.returnPct}
+                    prize={row.prize}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <h2 className="text-[15px] font-semibold text-ink">
+                  Full board · {formatNumber(LEADERBOARD_DATA.length)} traders
+                </h2>
+                {you && (
+                  <span className="num text-[12px] text-ink-3">
+                    You are ranked #{you.rank} on {formatPct(you.returnPct, 2)}
+                  </span>
+                )}
+              </div>
+              <div className="panel mt-4 overflow-hidden">
+                <LeaderboardTable data={LEADERBOARD_DATA} />
+              </div>
+            </section>
+          </div>
+
+          <div className="flex flex-col gap-6">
+            {/* Aggregate positioning */}
+            <section className="panel p-5">
+              <div className="flex items-center gap-2">
+                <ChartBar size={14} className="text-accent" aria-hidden />
+                <h2 className="text-[14px] font-semibold text-ink">Where the field sits</h2>
+              </div>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-ink-3">
+                Share of open positions held long, per contract, across all entrants in this round.
+              </p>
+
+              <div className="mt-4 flex flex-col gap-3">
+                {POSITIONING.map((row) => (
+                  <div key={row.base} className="flex items-center gap-3">
+                    <span className="num w-10 text-[12px] text-ink-2">{row.base}</span>
+                    <div className="flex flex-1 items-center gap-1">
+                      <span className="num w-9 text-right text-[11px] text-long">
+                        {row.longPct}%
                       </span>
-                      <span className="w-11 text-right font-mono text-sm" style={{ color: "#B8C0CC" }}>{s.longPct}</span>
+                      {/* Trackless split: two adjacent fills, no rail behind them. */}
+                      <span className="flex h-[6px] flex-1 overflow-hidden rounded-pill">
+                        <span
+                          className="h-full"
+                          style={{
+                            width: `${row.longPct}%`,
+                            backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                          }}
+                        />
+                        <span
+                          className="h-full flex-1"
+                          style={{ backgroundColor: 'rgba(248, 113, 113, 0.7)' }}
+                        />
+                      </span>
+                      <span className="num w-9 text-[11px] text-short">
+                        {100 - row.longPct}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <dl className="mt-5 flex gap-6 border-t border-line pt-4">
+                <div>
+                  <dt className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+                    <TrendUp size={12} className="text-long" aria-hidden />
+                    Net long
+                  </dt>
+                  <dd className="num mt-1.5 text-[14px] text-ink">64%</dd>
+                </div>
+                <div>
+                  <dt className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+                    <TrendDown size={12} className="text-short" aria-hidden />
+                    Net short
+                  </dt>
+                  <dd className="num mt-1.5 text-[14px] text-ink">36%</dd>
+                </div>
+              </dl>
+            </section>
+
+            {/* Trade log */}
+            <section className="panel overflow-hidden">
+              <div className="flex items-center justify-between border-b border-line px-5 py-3">
+                <span className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+                  <Pulse size={14} className="text-accent" aria-hidden />
+                  Recent fills
+                </span>
+                <span className="num text-[11.5px] text-ink-3">{TRADE_LOG.length}</span>
+              </div>
+              <ul>
+                {TRADE_LOG.map((entry, index) => (
+                  <li
+                    key={`${entry.time}-${index}`}
+                    className="flex items-center gap-3 border-b border-line px-5 py-2.5 last:border-b-0"
+                  >
+                    <span className="num w-11 text-[11.5px] text-ink-3">{entry.time}</span>
+                    <span
+                      className="flex-1 truncate text-[12.5px]"
+                      style={{
+                        color: entry.trader === 'You' ? 'var(--color-accent)' : 'var(--color-ink-2)',
+                      }}
+                    >
+                      {entry.trader}
+                    </span>
+                    <span
+                      className="num text-[11.5px]"
+                      style={{
+                        color: entry.action === 'Buy' ? 'var(--color-long)' : 'var(--color-short)',
+                      }}
+                    >
+                      {entry.action} {entry.base}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="border-t border-line px-5 py-3 text-[11.5px] text-ink-3">
+                A sample of fills from this round. The full tape lives in the trading terminal.
+              </p>
+            </section>
+
+            {/* Live market tiles */}
+            <section>
+              <div className="flex items-center justify-between">
+                <h2 className="text-[14px] font-semibold text-ink">Markets in play</h2>
+                <Link
+                  href={ROUTES.markets}
+                  className="flex items-center gap-1 text-[12px] text-accent hover:underline"
+                >
+                  All markets
+                  <ArrowRight size={11} aria-hidden />
+                </Link>
+              </div>
+              {error && marketTiles.length === 0 ? (
+                <div className="panel mt-4">
+                  <ErrorState
+                    title="Markets in play need the price feed"
+                    message={error}
+                    onRetry={refresh}
+                  />
+                </div>
+              ) : loading && marketTiles.length === 0 ? (
+                <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div key={index} className="bg-surface px-4 py-3.5">
+                      <Skeleton className="h-3 w-10" />
+                      <Skeleton className="mt-2.5 h-3 w-20" />
+                      <Skeleton className="mt-2.5 h-2.5 w-24" />
                     </div>
                   ))}
                 </div>
-              </div>
-
-              {/* Trade Log */}
-              <div className="glass rounded-2xl overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                  <span className="text-[12px] font-mono tracking-widest uppercase" style={{ color: "#A4AEC0" }}>Trade log</span>
-                  <span className="text-sm font-mono" style={{ color: "#00C8FF" }}>{TRADE_LOG_ENTRIES.length}</span>
+              ) : (
+                <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line">
+                  {marketTiles.map((ticker) => (
+                    <Link
+                      key={ticker.symbol}
+                      href={ROUTES.marketDetail(ticker.base)}
+                      className="bg-surface px-4 py-3.5 transition-colors hover:bg-surface-2"
+                    >
+                      <p className="text-[12.5px] font-semibold text-ink">{ticker.base}</p>
+                      <p className="num mt-1.5 text-[13px] text-ink-2">
+                        {formatPrice(ticker.price)}
+                      </p>
+                      <span className="mt-1.5 flex items-center justify-between">
+                        <ChangeTag value={ticker.changePct} size="sm" caret={false} />
+                        <span className="num text-[10.5px] text-ink-3">
+                          {formatUsd(ticker.quoteVolume, 1)}
+                        </span>
+                      </span>
+                    </Link>
+                  ))}
                 </div>
-                {TRADE_LOG_ENTRIES.map((l, i) => (
-                  <div
-                    key={i}
-                    className="grid items-center h-10 px-5 font-mono text-[13px]"
-                    style={{
-                      gridTemplateColumns: "74px 1fr auto",
-                      gap: "10px",
-                      borderBottom: "1px solid rgba(255,255,255,0.03)",
-                    }}
-                  >
-                    <span style={{ color: "#A4AEC0" }}>{l.time}</span>
-                    <span className="truncate" style={{ color: "#E5EAF3" }}>{l.name}</span>
-                    <span className="tracking-wider" style={{ color: l.color }}>{l.action} {l.sym}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Stats Tiles */}
-              <div className="grid grid-cols-2 gap-px glass rounded-2xl overflow-hidden">
-                {MARKETS.slice(0, 4).map((m) => (
-                  <div key={m.symbol} className="p-4 flex items-baseline justify-between gap-4" style={{ background: "rgba(12,19,32,0.6)" }}>
-                    <div>
-                      <div className="font-bold text-[22px] tracking-wider uppercase" style={{ color: "#FFFFFF" }}>{m.symbol}</div>
-                      <div className="text-[11px] font-mono tracking-widest" style={{ color: "#A4AEC0" }}>{m.pair}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono text-2xl font-black" style={{ color: m.change24h >= 0 ? "#00D084" : "#FF4D67" }}>
-                        {m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </div>
-                      <div className="text-sm font-mono" style={{ color: m.change24h >= 0 ? "#00D084" : "#FF4D67" }}>
-                        {m.change24h >= 0 ? "+" : ""}{m.change24h.toFixed(2)}%
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+              )}
+            </section>
           </div>
         </div>
-      ) : (
-        /* Classic View */
-        <div className="max-w-3xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h1 className="font-black text-3xl mb-1" style={{ color: "#FFFFFF" }}>LIVE LEADERBOARD</h1>
-              <p className="text-sm" style={{ color: "#A4AEC0" }}>Updated in real-time</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="live-dot" />
-              <span className="text-xs font-semibold" style={{ color: "#FF4D67" }}>LIVE</span>
-            </div>
-          </div>
-
-          <select
-            className="input-field w-full px-4 py-3 rounded-xl text-sm mb-6"
-            value={comp}
-            onChange={(e) => setComp(e.target.value)}
-            aria-label="Select competition"
-          >
-            {COMPETITIONS.map((c) => (
-              <option key={c.id} value={c.name}>{c.name}</option>
-            ))}
-          </select>
-
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            {LEADERBOARD_DATA.slice(0, 3).map((row, i) => (
-              <div
-                key={row.rank}
-                className={`rounded-2xl p-4 text-center ${["podium-1", "podium-2", "podium-3"][i]}`}
-              >
-                <div className="text-2xl mb-1">{["🥇", "🥈", "🥉"][i]}</div>
-                <div className="font-bold text-sm mb-0.5" style={{ color: "#E5EAF3" }}>{row.name}</div>
-                <div className="font-black font-mono" style={{ color: "#00D084" }}>{formatPercentage(row.returnPct)}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="glass rounded-2xl p-4">
-            <div
-              className="grid grid-cols-4 text-xs font-semibold mb-2 px-4 pb-2"
-              style={{ color: "#A4AEC0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
-            >
-              <span>RANK</span>
-              <span>TRADER</span>
-              <span className="text-right">RETURN</span>
-              <span className="text-right">PRIZE</span>
-            </div>
-            {LEADERBOARD_DATA.map((row) => (
-              <div
-                key={row.rank}
-                className={`grid grid-cols-4 items-center px-4 py-3 rounded-xl my-0.5 ${
-                  row.isUser ? "your-row" : "hover:bg-white/[0.02]"
-                }`}
-              >
-                <span
-                  className="text-sm font-mono font-bold"
-                  style={{
-                    color:
-                      row.rank <= 3
-                        ? (["#FFB020", "#A4AEC0", "#cd7f32"] as const)[row.rank - 1]
-                        : row.isUser ? "#00C8FF" : "#A4AEC0",
-                  }}
-                >
-                  #{row.rank}
-                </span>
-                <span className="text-sm font-medium" style={{ color: row.isUser ? "#00C8FF" : "#E5EAF3" }}>
-                  {row.name}
-                  {row.isUser && (
-                    <span className="text-xs ml-1 px-1 py-0.5 rounded" style={{ background: "rgba(0,200,255,0.15)" }}>YOU</span>
-                  )}
-                </span>
-                <span className="text-right text-sm font-mono font-bold" style={{ color: "#00D084" }}>
-                  {formatPercentage(row.returnPct)}
-                </span>
-                <span className="text-right text-xs font-mono" style={{ color: row.prize > 0 ? "#FFB020" : "#A4AEC0" }}>
-                  {row.prize > 0 ? `🏆 ${row.prize}` : "—"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      </main>
     </div>
   )
 }

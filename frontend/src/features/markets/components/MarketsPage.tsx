@@ -1,294 +1,365 @@
-"use client"
+'use client'
 
-import { useState, useMemo } from "react"
-import { useRouter } from "next/navigation"
-import { ROUTES } from "@/config/app"
-import Header from "@/components/layout/Header"
-import { MARKETS } from "@/mocks/markets"
-import type { Market } from "@/types/market"
+import { useMemo, useState } from 'react'
+import Link from 'next/link'
+import { ArrowsClockwise, CaretDown, CaretUp, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { ROUTES } from '@/config/app'
+import { useLiveTickers, useSparklines } from '@/lib/binance/hooks'
+import { MARKET_SYMBOLS } from '@/lib/binance/symbols'
+import type { Ticker24h } from '@/lib/binance/types'
+import { formatClock, formatNumber, formatPrice, formatUsd } from '@/lib/format'
+import Header from '@/components/layout/Header'
+import Sparkline from '@/components/common/Sparkline'
+import ChangeTag from '@/components/common/ChangeTag'
+import { ErrorState, TableSkeleton } from '@/components/common/StatePanel'
 
-type Tab = "all" | "popular" | "movers" | "spotlight"
-type SortKey = "pair" | "price" | "change24h" | "high24h" | "low24h" | "volume24h"
-type SortDir = "asc" | "desc"
+type Filter = 'all' | 'gainers' | 'losers' | 'majors'
+type SortKey = 'pair' | 'price' | 'change' | 'high' | 'low' | 'quoteVolume'
+type SortDir = 'asc' | 'desc'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "all", label: "ALL" },
-  { key: "popular", label: "MOST POPULAR" },
-  { key: "movers", label: "MOVERS" },
-  { key: "spotlight", label: "SPOTLIGHT" },
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'all', label: 'All contracts' },
+  { key: 'majors', label: 'Majors' },
+  { key: 'gainers', label: 'Up 24h' },
+  { key: 'losers', label: 'Down 24h' },
 ]
 
-function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const range = max - min || 1
-  const h = 22
-  const w = 44
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
-    .join(" ")
-  const color = positive ? "#00D084" : "#FF4D67"
+const MAJORS = ['BTC', 'ETH', 'SOL', 'BNB']
 
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-      <polyline
-        points={points}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.75"
-      />
-    </svg>
-  )
-}
+const COLUMNS: { key: SortKey | null; label: string; align: 'left' | 'right' }[] = [
+  { key: 'pair', label: 'Contract', align: 'left' },
+  { key: 'price', label: 'Last', align: 'right' },
+  { key: 'change', label: '24h change', align: 'right' },
+  { key: 'high', label: '24h high', align: 'right' },
+  { key: 'low', label: '24h low', align: 'right' },
+  { key: 'quoteVolume', label: '24h volume', align: 'right' },
+  { key: null, label: 'Trend', align: 'right' },
+]
+
+const GRID = 'minmax(0,1.4fr) 140px 108px 132px 132px 132px 104px'
 
 export default function MarketsPage() {
-  const router = useRouter()
-  const [tab, setTab] = useState<Tab>("all")
-  const [search, setSearch] = useState("")
-  const [sortKey, setSortKey] = useState<SortKey>("volume24h")
-  const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const { tickers, loading, error, status, updatedAt, refresh } = useLiveTickers()
+  const { sparklines } = useSparklines(MARKET_SYMBOLS.map((market) => market.base))
 
-  const filtered = useMemo(() => {
-    let list = [...MARKETS]
+  const [filter, setFilter] = useState<Filter>('all')
+  const [search, setSearch] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('quoteVolume')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
-    if (search) {
-      const q = search.toLowerCase()
+  const rows = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+
+    let list = tickers.filter((ticker) => ticker.price > 0)
+
+    if (needle) {
       list = list.filter(
-        (m) =>
-          m.symbol.toLowerCase().includes(q) ||
-          m.name.toLowerCase().includes(q) ||
-          m.pair.toLowerCase().includes(q)
+        (ticker) =>
+          ticker.base.toLowerCase().includes(needle) ||
+          ticker.name.toLowerCase().includes(needle),
       )
     }
 
-    if (tab === "popular") {
-      list = list.filter((m) => ["BTC", "ETH", "SOL", "BNB"].includes(m.symbol))
-    } else if (tab === "movers") {
-      list = list.filter((m) => Math.abs(m.change24h) > 1.5)
-    } else if (tab === "spotlight") {
-      list = list.filter((m) => m.change24h > 2)
-    }
+    if (filter === 'majors') list = list.filter((ticker) => MAJORS.includes(ticker.base))
+    if (filter === 'gainers') list = list.filter((ticker) => ticker.changePct > 0)
+    if (filter === 'losers') list = list.filter((ticker) => ticker.changePct < 0)
 
-    list.sort((a, b) => {
-      let va: number, vb: number
+    const read = (ticker: Ticker24h) => {
       switch (sortKey) {
-        case "pair":
-          return sortDir === "asc"
-            ? a.pair.localeCompare(b.pair)
-            : b.pair.localeCompare(a.pair)
-        case "price":
-          va = a.price
-          vb = b.price
-          break
-        case "change24h":
-          va = Math.abs(a.change24h)
-          vb = Math.abs(b.change24h)
-          break
-        case "high24h":
-          va = a.high24h
-          vb = b.high24h
-          break
-        case "low24h":
-          va = a.low24h
-          vb = b.low24h
-          break
+        case 'pair':
+          return ticker.base
+        case 'price':
+          return ticker.price
+        case 'change':
+          return ticker.changePct
+        case 'high':
+          return ticker.high
+        case 'low':
+          return ticker.low
         default:
-          va = 0
-          vb = 0
-          break
+          return ticker.quoteVolume
       }
-      return sortDir === "asc" ? va - vb : vb - va
-    })
-
-    return list
-  }, [tab, search, sortKey, sortDir])
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
-    } else {
-      setSortKey(key)
-      setSortDir("desc")
     }
-  }
 
-  const colHeader = (key: SortKey, label: string, align: "left" | "right" = "right") => (
-    <div
-      onClick={() => handleSort(key)}
-      className="cursor-pointer select-none flex items-center gap-1"
-      style={{ justifyContent: align === "right" ? "flex-end" : "flex-start" }}
-    >
-      <span>{label}</span>
-      <span style={{ fontSize: "8px", color: sortKey === key ? "#00C8FF" : "#A4AEC0" }}>
-        {sortKey === key ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
-      </span>
-    </div>
+    return [...list].sort((a, b) => {
+      const left = read(a)
+      const right = read(b)
+      if (typeof left === 'string' && typeof right === 'string') {
+        return sortDir === 'asc' ? left.localeCompare(right) : right.localeCompare(left)
+      }
+      return sortDir === 'asc'
+        ? Number(left) - Number(right)
+        : Number(right) - Number(left)
+    })
+  }, [tickers, search, filter, sortKey, sortDir])
+
+  const totals = useMemo(
+    () => ({
+      volume: tickers.reduce((sum, ticker) => sum + ticker.quoteVolume, 0),
+      advancing: tickers.filter((ticker) => ticker.changePct > 0).length,
+      declining: tickers.filter((ticker) => ticker.changePct < 0).length,
+    }),
+    [tickers],
   )
 
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(key)
+    setSortDir(key === 'pair' ? 'asc' : 'desc')
+  }
+
   return (
-    <div className="min-h-screen" style={{ background: "#080D18" }}>
+    <div className="min-h-[100dvh] bg-void">
       <Header />
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="flex items-end justify-between gap-10 mb-6">
+
+      <main className="mx-auto max-w-[1440px] px-4 py-8 lg:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <div className="text-xs font-mono tracking-widest mb-2" style={{ color: "#A4AEC0" }}>
-              Perpetual futures · USDT margined
-            </div>
-            <h1 className="font-black text-5xl tracking-tight" style={{ color: "#FFFFFF" }}>
-              MARKETS
+            <p className="label">USDT-margined perpetuals</p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+              Markets
             </h1>
+            <p className="mt-3 max-w-[58ch] text-[14px] leading-relaxed text-ink-2">
+              {MARKET_SYMBOLS.length} contracts priced live from the Binance futures feed.
+              {tickers.length > 0 && ` ${totals.advancing} up and ${totals.declining} down over the last 24 hours.`}
+            </p>
           </div>
-          <div className="flex items-stretch glass rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-r" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
-              <div className="text-[10px] font-mono tracking-widest" style={{ color: "#A4AEC0" }}>
-                24h volume
-              </div>
-              <div className="font-black text-lg font-mono" style={{ color: "#FFFFFF" }}>
-                $3.71B
-              </div>
+
+          <dl className="flex divide-x divide-line">
+            <div className="px-5 first:pl-0">
+              <dt className="label">Universe volume</dt>
+              <dd className="num mt-2 text-[19px] font-semibold text-ink">
+                {totals.volume ? formatUsd(totals.volume) : '...'}
+              </dd>
             </div>
-            <div className="px-5 py-3">
-              <div className="text-[10px] font-mono tracking-widest" style={{ color: "#A4AEC0" }}>
-                Open interest
-              </div>
-              <div className="font-black text-lg font-mono" style={{ color: "#FFFFFF" }}>
-                $1.59B
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-0 mb-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className="px-5 py-3 text-sm font-bold tracking-wide uppercase transition-all"
-              style={{
-                color: tab === t.key ? "#00C8FF" : "#A4AEC0",
-                borderBottom: tab === t.key ? "2px solid #1677FF" : "2px solid transparent",
-                background: tab === t.key ? "rgba(22,119,255,0.08)" : "transparent",
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-          <div className="flex-1" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search market"
-            className="input-field px-4 py-2 rounded-lg text-sm font-mono mb-2"
-            style={{ width: "220px" }}
-          />
-        </div>
-
-        <div className="glass rounded-b-2xl rounded-t-none overflow-hidden">
-          <div
-            className="grid items-center h-10 text-[10px] font-mono tracking-widest uppercase px-4"
-            style={{
-              gridTemplateColumns: "minmax(0,1.5fr) 130px 100px 120px 120px 130px 110px 80px",
-              color: "#A4AEC0",
-              background: "rgba(255,255,255,0.02)",
-              borderBottom: "1px solid rgba(255,255,255,0.06)",
-            }}
-          >
-            {colHeader("pair", "Pair", "left")}
-            {colHeader("price", "Price")}
-            {colHeader("change24h", "24h Chg")}
-            {colHeader("high24h", "24h High")}
-            {colHeader("low24h", "24h Low")}
-            <div>Volume</div>
-            <div>Trend</div>
-            <div style={{ textAlign: "right" }}></div>
-          </div>
-
-          {filtered.map((m, i) => (
-            <div
-              key={m.symbol}
-              onClick={() => router.push(ROUTES.marketDetail(m.symbol))}
-              className="grid items-center h-13 px-4 cursor-pointer transition-colors"
-              style={{
-                gridTemplateColumns: "minmax(0,1.5fr) 130px 100px 120px 120px 130px 110px 80px",
-                borderBottom: "1px solid rgba(255,255,255,0.04)",
-                background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
-              }}
-            >
-              <div className="flex items-baseline gap-3 min-w-0">
-                <span className="font-bold text-lg tracking-wide uppercase" style={{ color: "#FFFFFF" }}>
-                  {m.symbol}
-                </span>
-                <span className="text-sm truncate" style={{ color: "#A4AEC0" }}>
-                  {m.name}
-                </span>
+            <div className="px-5 last:pr-0">
+              <dt className="label">Feed</dt>
+              <dd className="mt-2 flex items-center gap-2">
                 <span
-                  className="text-[9px] tracking-widest px-1.5 py-0.5 rounded"
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: m.category === "perp" ? "#00C8FF" : "#A4AEC0",
-                  }}
+                  className="num text-[13px]"
+                  style={{ color: status === 'open' ? 'var(--color-long)' : 'var(--color-ink-3)' }}
                 >
-                  PERP
+                  {status === 'open' ? 'Streaming' : status === 'closed' ? 'Offline' : 'Connecting'}
                 </span>
-              </div>
-              <div className="text-right font-mono text-sm font-bold" style={{ color: "#FFFFFF" }}>
-                {m.price < 10 ? m.price.toFixed(4) : m.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </div>
-              <div
-                className="text-right font-mono text-sm font-semibold"
-                style={{ color: m.change24h >= 0 ? "#00D084" : "#FF4D67" }}
-              >
-                {m.change24h >= 0 ? "+" : ""}
-                {m.change24h.toFixed(2)}%
-              </div>
-              <div className="text-right font-mono text-sm" style={{ color: "#B8C0CC" }}>
-                {m.high24h < 10 ? m.high24h.toFixed(4) : m.high24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-right font-mono text-sm" style={{ color: "#B8C0CC" }}>
-                {m.low24h < 10 ? m.low24h.toFixed(4) : m.low24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-right font-mono text-sm" style={{ color: "#C8D0DC" }}>
-                {m.volume24h}
-              </div>
-              <div className="flex items-end justify-center gap-0.5" style={{ height: "26px" }}>
-                <Sparkline data={m.sparkline} positive={m.change24h >= 0} />
-              </div>
-              <div className="text-right">
+                {updatedAt > 0 && (
+                  <span className="num text-[11px] text-ink-3">{formatClock(updatedAt)}</span>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        {/* Filters and search */}
+        <div className="mt-8 flex flex-wrap items-center gap-3 border-b border-line pb-3">
+          <div role="tablist" aria-label="Filter contracts" className="flex flex-wrap gap-1.5">
+            {FILTERS.map((item) => {
+              const selected = filter === item.key
+              return (
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    router.push(ROUTES.marketDetail(m.symbol))
-                  }}
-                  className="px-3 py-1.5 text-[10px] font-mono tracking-widest uppercase transition-all"
+                  key={item.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setFilter(item.key)}
+                  className="rounded-control px-3 py-2 text-[12.5px] font-medium transition-colors"
                   style={{
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    color: "#00C8FF",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "#00C8FF"
-                    e.currentTarget.style.color = "#080D18"
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent"
-                    e.currentTarget.style.color = "#00C8FF"
+                    color: selected ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                    backgroundColor: selected ? 'var(--color-accent-soft)' : 'transparent',
                   }}
                 >
-                  TRADE
+                  {item.label}
                 </button>
-              </div>
-            </div>
-          ))}
+              )
+            })}
+          </div>
 
-          {filtered.length === 0 && (
-            <div className="py-16 text-center text-sm" style={{ color: "#A4AEC0" }}>
-              No markets found matching your search.
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <MagnifyingGlass
+                size={13}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-3"
+                aria-hidden
+              />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Filter by symbol or name"
+                aria-label="Filter contracts by symbol or name"
+                className="field num w-[230px] py-2 pl-8 text-[12.5px]"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  aria-label="Clear filter"
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-ink-3 hover:text-ink"
+                >
+                  <X size={12} aria-hidden />
+                </button>
+              )}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={refresh}
+              className="btn btn-ghost size-9"
+              aria-label="Refresh market data"
+            >
+              <ArrowsClockwise size={14} aria-hidden />
+            </button>
+          </div>
         </div>
-      </div>
+
+        {/* Table on desktop, cards on mobile (explicit per-section collapse). */}
+        {error && tickers.length === 0 ? (
+          <div className="panel mt-6">
+            <ErrorState message={error} onRetry={refresh} />
+          </div>
+        ) : loading && tickers.length === 0 ? (
+          <div className="panel mt-6 overflow-hidden">
+            <TableSkeleton rows={8} columns={7} />
+          </div>
+        ) : (
+          <>
+            <div className="panel mt-6 hidden overflow-hidden lg:block">
+              <div
+                className="grid items-center gap-4 border-b border-line bg-surface-2/60 px-4 py-2.5"
+                style={{ gridTemplateColumns: GRID }}
+              >
+                {COLUMNS.map((column) => (
+                  <div
+                    key={column.label}
+                    className={column.align === 'right' ? 'flex justify-end' : undefined}
+                  >
+                    {column.key ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(column.key as SortKey)}
+                        aria-label={`Sort by ${column.label}`}
+                        className="label flex items-center gap-1 transition-colors hover:text-ink"
+                        style={{ color: sortKey === column.key ? 'var(--color-accent)' : undefined }}
+                      >
+                        {column.label}
+                        {sortKey === column.key &&
+                          (sortDir === 'asc' ? (
+                            <CaretUp size={9} weight="bold" aria-hidden />
+                          ) : (
+                            <CaretDown size={9} weight="bold" aria-hidden />
+                          ))}
+                      </button>
+                    ) : (
+                      <span className="label">{column.label}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {rows.length === 0 && (
+                <p className="px-4 py-14 text-center text-[13px] text-ink-2">
+                  No contract matches that filter. Clear the search or switch back to all contracts.
+                </p>
+              )}
+
+              {rows.map((ticker) => (
+                <Link
+                  key={ticker.symbol}
+                  href={ROUTES.marketDetail(ticker.base)}
+                  className="grid items-center gap-4 border-b border-line px-4 py-3 transition-colors last:border-b-0 hover:bg-white/[0.02]"
+                  style={{ gridTemplateColumns: GRID }}
+                >
+                  <div className="flex min-w-0 items-baseline gap-3">
+                    <span className="text-[14px] font-semibold text-ink">{ticker.base}</span>
+                    <span className="truncate text-[12.5px] text-ink-3">{ticker.name}</span>
+                    <span className="pill">Perp</span>
+                  </div>
+                  <span className="num text-right text-[13px] text-ink">
+                    {formatPrice(ticker.price)}
+                  </span>
+                  <span className="flex justify-end">
+                    <ChangeTag value={ticker.changePct} size="sm" />
+                  </span>
+                  <span className="num text-right text-[13px] text-ink-2">
+                    {formatPrice(ticker.high)}
+                  </span>
+                  <span className="num text-right text-[13px] text-ink-2">
+                    {formatPrice(ticker.low)}
+                  </span>
+                  <span className="num text-right text-[13px] text-ink-2">
+                    {formatUsd(ticker.quoteVolume)}
+                  </span>
+                  <span className="flex justify-end">
+                    <Sparkline
+                      data={sparklines[ticker.base] ?? []}
+                      positive={ticker.changePct >= 0}
+                      width={92}
+                      height={26}
+                    />
+                  </span>
+                </Link>
+              ))}
+            </div>
+
+            {/* Mobile card list */}
+            <div className="mt-6 grid gap-3 lg:hidden">
+              {rows.length === 0 && (
+                <p className="panel px-4 py-12 text-center text-[13px] text-ink-2">
+                  No contract matches that filter.
+                </p>
+              )}
+              {rows.map((ticker) => (
+                <Link
+                  key={ticker.symbol}
+                  href={ROUTES.marketDetail(ticker.base)}
+                  className="panel p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[14px] font-semibold text-ink">{ticker.base}</p>
+                      <p className="mt-0.5 text-[12px] text-ink-3">{ticker.name}</p>
+                    </div>
+                    <ChangeTag value={ticker.changePct} size="sm" />
+                  </div>
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <span className="num text-[17px] font-semibold text-ink">
+                      {formatPrice(ticker.price)}
+                    </span>
+                    <Sparkline
+                      data={sparklines[ticker.base] ?? []}
+                      positive={ticker.changePct >= 0}
+                      width={80}
+                      height={24}
+                    />
+                  </div>
+                  <dl className="mt-3 grid grid-cols-3 gap-3 border-t border-line pt-3">
+                    <div>
+                      <dt className="label">High</dt>
+                      <dd className="num mt-1 text-[12px] text-ink-2">{formatPrice(ticker.high)}</dd>
+                    </div>
+                    <div>
+                      <dt className="label">Low</dt>
+                      <dd className="num mt-1 text-[12px] text-ink-2">{formatPrice(ticker.low)}</dd>
+                    </div>
+                    <div className="text-right">
+                      <dt className="label">Volume</dt>
+                      <dd className="num mt-1 text-[12px] text-ink-2">
+                        {formatUsd(ticker.quoteVolume)}
+                      </dd>
+                    </div>
+                  </dl>
+                </Link>
+              ))}
+            </div>
+          </>
+        )}
+
+        <p className="mt-5 text-[11.5px] leading-relaxed text-ink-3">
+          Prices, ranges and volumes are the rolling 24 hour figures reported by Binance for each
+          contract. Trend lines plot hourly closes over the same window.
+          {rows.length > 0 && ` Showing ${formatNumber(rows.length)} of ${formatNumber(tickers.length)} contracts.`}
+        </p>
+      </main>
     </div>
   )
 }

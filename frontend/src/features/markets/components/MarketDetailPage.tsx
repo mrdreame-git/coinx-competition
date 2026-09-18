@@ -1,471 +1,641 @@
-"use client"
+'use client'
 
-import { useEffect, useMemo, useState } from "react"
-import { useRouter, useParams } from "next/navigation"
-import { ROUTES } from "@/config/app"
-import Header from "@/components/layout/Header"
-import CandlestickChart from "@/components/common/CandlestickChart"
-import { MARKETS } from "@/mocks/markets"
+import { useMemo, useState } from 'react'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
+import { ArrowLeft, ArrowsClockwise, ArrowRight, Info } from '@phosphor-icons/react'
+import { ROUTES } from '@/config/app'
+import { findSymbol, MARKET_SYMBOLS } from '@/lib/binance/symbols'
+import { useMarketProfile, useMarketWorkspace } from '@/lib/binance/hooks'
+import type { Candle } from '@/lib/binance/types'
+import {
+  formatClock,
+  formatNumber,
+  formatPctPlain,
+  formatPrice,
+  formatQty,
+  formatRelative,
+  formatUsd,
+} from '@/lib/format'
+import Header from '@/components/layout/Header'
+import CandlestickChart from '@/components/common/CandlestickChart'
+import DepthChart from '@/components/common/DepthChart'
+import ChangeTag from '@/components/common/ChangeTag'
+import { ErrorState } from '@/components/common/StatePanel'
 
-type StatTab = "overview" | "funding" | "mark" | "technicals"
+const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'] as const
+type Timeframe = (typeof TIMEFRAMES)[number]
 
-type Candle = {
-  t: number
-  o: number
-  h: number
-  l: number
-  c: number
-  v: number
-}
+const TABS = ['Overview', 'Funding', 'Technicals', 'Sessions'] as const
+type Tab = (typeof TABS)[number]
 
-type Ticker = {
-  price: number
-  change: number
-  high: number
-  low: number
-  volume: number
-  quoteVolume: number
-}
+/* ------------------------------------------------------------------ */
+/* Indicators computed from the live candle series, never hardcoded.   */
+/* ------------------------------------------------------------------ */
 
-type DepthRow = {
-  price: number
-  qty: number
-  total: number
-}
-
-type TradeRow = {
-  id: number
-  price: number
-  qty: number
-  time: number
-  side: "buy" | "sell"
-}
-
-type MarkData = {
-  markPrice: number
-  indexPrice: number
-  fundingRate: number
-  nextFundingTime: number
-}
-
-type FundingRow = {
-  fundingTime: number
-  fundingRate: number
-}
-
-type OpenInterest = {
-  value: number
-  time: number
-}
-
-const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"]
-const STAT_TABS: StatTab[] = ["overview", "funding", "mark", "technicals"]
-const EMPTY_TICKER: Ticker = { price: 0, change: 0, high: 0, low: 0, volume: 0, quoteVolume: 0 }
-const EMPTY_MARK: MarkData = { markPrice: 0, indexPrice: 0, fundingRate: 0, nextFundingTime: 0 }
-
-function toNumber(value: unknown): number {
-  const n = Number(value)
-  return Number.isFinite(n) ? n : 0
-}
-
-function formatPrice(value: number): string {
-  if (!value) return "—"
-  if (value < 1) return value.toFixed(5)
-  if (value < 100) return value.toFixed(3)
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-}
-
-function formatCompact(value: number): string {
-  if (!value) return "—"
-  return Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value)
-}
-
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value)) return "—"
-  return `${value >= 0 ? "+" : ""}${value.toFixed(3)}%`
-}
-
-function formatTime(value: number): string {
-  if (!value) return "—"
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-}
-
-function mapDepth(rows: unknown): DepthRow[] {
-  if (!Array.isArray(rows)) return []
-
-  let total = 0
-  return rows.slice(0, 14).map((row) => {
-    const values = Array.isArray(row) ? row : []
-    const price = toNumber(values[0])
-    const qty = toNumber(values[1])
-    total += qty
-    return { price, qty, total }
-  })
-}
-
-function mapFunding(rows: unknown): FundingRow[] {
-  if (!Array.isArray(rows)) return []
-
-  return rows.slice(-8).reverse().map((row) => {
-    const data = row as Record<string, unknown>
-    return {
-      fundingTime: toNumber(data.fundingTime),
-      fundingRate: toNumber(data.fundingRate) * 100,
-    }
-  })
-}
-
-function calculateTechnicals(candles: Candle[], ticker: Ticker) {
-  const closes = candles.map((c) => c.c).slice(-50)
-  const gains: number[] = []
-  const losses: number[] = []
-
-  for (let i = 1; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1]
-    gains.push(Math.max(diff, 0))
-    losses.push(Math.abs(Math.min(diff, 0)))
+function rsi(candles: Candle[], period = 14): number | null {
+  if (candles.length < period + 1) return null
+  const closes = candles.map((candle) => candle.c)
+  let gains = 0
+  let losses = 0
+  for (let index = closes.length - period; index < closes.length; index += 1) {
+    const delta = closes[index] - closes[index - 1]
+    if (delta >= 0) gains += delta
+    else losses += Math.abs(delta)
   }
+  if (losses === 0) return 100
+  const relative = gains / period / (losses / period)
+  return 100 - 100 / (1 + relative)
+}
 
-  const avgGain = gains.slice(-14).reduce((a, b) => a + b, 0) / 14
-  const avgLoss = losses.slice(-14).reduce((a, b) => a + b, 0) / 14
-  const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
-  const sma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / Math.max(closes.slice(-20).length, 1)
-  const sma50 = closes.reduce((a, b) => a + b, 0) / Math.max(closes.length, 1)
-  const bias = ticker.price && sma20 ? ((ticker.price - sma20) / sma20) * 100 : 0
+function average(candles: Candle[], period: number): number | null {
+  if (candles.length < period) return null
+  const window = candles.slice(-period)
+  return window.reduce((sum, candle) => sum + candle.c, 0) / window.length
+}
 
-  return [
-    { label: "RSI 14", value: Number.isFinite(rsi) ? rsi.toFixed(1) : "—", hint: rsi > 70 ? "Hot" : rsi < 30 ? "Cold" : "Range" },
-    { label: "SMA 20", value: formatPrice(sma20), hint: bias >= 0 ? "Above" : "Below" },
-    { label: "SMA 50", value: formatPrice(sma50), hint: ticker.price >= sma50 ? "Above" : "Below" },
-    { label: "24h Bias", value: formatPercent(ticker.change), hint: ticker.change >= 0 ? "Bid" : "Offer" },
-  ]
+function StatCell({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="px-4 py-3">
+      <p className="label">{label}</p>
+      <p className="num mt-1.5 text-[13px]" style={{ color: tone ?? 'var(--color-ink)' }}>
+        {value}
+      </p>
+    </div>
+  )
 }
 
 export default function MarketDetailPage() {
-  const router = useRouter()
-  const { symbol } = useParams<{ symbol: string }>()
-  const baseSymbol = symbol?.toUpperCase() ?? "BTC"
-  const pairSymbol = `${baseSymbol}USDT`
-  const market = MARKETS.find((m) => m.symbol === baseSymbol) ?? MARKETS[0]
-  const [timeframe, setTimeframe] = useState("1h")
-  const [statTab, setStatTab] = useState<StatTab>("overview")
-  const [candles, setCandles] = useState<Candle[]>([])
-  const [ticker, setTicker] = useState<Ticker>(EMPTY_TICKER)
-  const [mark, setMark] = useState<MarkData>(EMPTY_MARK)
-  const [funding, setFunding] = useState<FundingRow[]>([])
-  const [openInterest, setOpenInterest] = useState<OpenInterest>({ value: 0, time: 0 })
-  const [bids, setBids] = useState<DepthRow[]>([])
-  const [asks, setAsks] = useState<DepthRow[]>([])
-  const [trades, setTrades] = useState<TradeRow[]>([])
-  const [error, setError] = useState("")
+  const params = useParams<{ symbol: string }>()
+  const base = decodeURIComponent(params?.symbol ?? 'BTC').toUpperCase()
+  const market = findSymbol(base) ?? MARKET_SYMBOLS[0]
 
-  const stats = useMemo(() => [
-    { k: "Last Price", v: formatPrice(ticker.price) },
-    { k: "24h Change", v: formatPercent(ticker.change) },
-    { k: "24h High", v: formatPrice(ticker.high) },
-    { k: "24h Low", v: formatPrice(ticker.low) },
-    { k: "24h Volume", v: `$${formatCompact(ticker.quoteVolume)}` },
-    { k: "Open Interest", v: `${formatCompact(openInterest.value)} ${baseSymbol}` },
-  ], [baseSymbol, openInterest.value, ticker])
+  const [timeframe, setTimeframe] = useState<Timeframe>('1h')
+  const [tab, setTab] = useState<Tab>('Overview')
 
-  const depthMax = Math.max(...bids.map((b) => b.total), ...asks.map((a) => a.total), 1)
-  const technicals = useMemo(() => calculateTechnicals(candles, ticker), [candles, ticker])
+  const {
+    ticker,
+    candles,
+    book,
+    trades,
+    mark,
+    fundingHistory,
+    openInterest,
+    loading,
+    error,
+    status,
+    refresh,
+  } = useMarketWorkspace(market.base, timeframe, {
+    candleLimit: 180,
+    bookLimit: 20,
+    tradeLimit: 26,
+  })
 
-  useEffect(() => {
-    let active = true
-    const controller = new AbortController()
+  const feed = useMarketProfile()
 
-    async function loadInitialData() {
-      try {
-        setError("")
-        const [klines, tickerData, depthData, tradesData, markData, fundingData, oiData] = await Promise.all([
-          fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${pairSymbol}&interval=${timeframe}&limit=180`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${pairSymbol}`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/depth?symbol=${pairSymbol}&limit=20`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/trades?symbol=${pairSymbol}&limit=18`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${pairSymbol}`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${pairSymbol}&limit=8`, { signal: controller.signal }).then((r) => r.json()),
-          fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${pairSymbol}`, { signal: controller.signal }).then((r) => r.json()),
-        ])
+  // Funding is a futures concept. When the app is reading Binance's spot feed the
+  // tab is dropped rather than left sitting there permanently empty.
+  const visibleTabs = feed.derivatives ? TABS : TABS.filter((option) => option !== 'Funding')
 
-        if (!active) return
+  const changePct = ticker?.changePct ?? 0
+  const positive = changePct >= 0
 
-        if (Array.isArray(klines)) {
-          setCandles(klines.map((k) => {
-            const row = Array.isArray(k) ? k : []
-            return { t: toNumber(row[0]), o: toNumber(row[1]), h: toNumber(row[2]), l: toNumber(row[3]), c: toNumber(row[4]), v: toNumber(row[5]) }
-          }))
-        }
+  const indicators = useMemo(() => {
+    const rsiValue = rsi(candles)
+    const sma20 = average(candles, 20)
+    const sma50 = average(candles, 50)
+    const last = candles[candles.length - 1]?.c ?? 0
+    const swings = candles.slice(-48).map((candle) => candle.h - candle.l)
+    const atr = swings.length ? swings.reduce((sum, value) => sum + value, 0) / swings.length : 0
+    return { rsiValue, sma20, sma50, last, atr }
+  }, [candles])
 
-        setTicker({
-          price: toNumber(tickerData.lastPrice),
-          change: toNumber(tickerData.priceChangePercent),
-          high: toNumber(tickerData.highPrice),
-          low: toNumber(tickerData.lowPrice),
-          volume: toNumber(tickerData.volume),
-          quoteVolume: toNumber(tickerData.quoteVolume),
-        })
-        setBids(mapDepth(depthData.bids))
-        setAsks(mapDepth(depthData.asks))
-        setTrades(Array.isArray(tradesData) ? tradesData.slice(-18).reverse().map((trade) => {
-          const data = trade as Record<string, unknown>
-          return { id: toNumber(data.id), price: toNumber(data.price), qty: toNumber(data.qty), time: toNumber(data.time), side: data.isBuyerMaker ? "sell" : "buy" }
-        }) : [])
-        setMark({
-          markPrice: toNumber(markData.markPrice),
-          indexPrice: toNumber(markData.indexPrice),
-          fundingRate: toNumber(markData.lastFundingRate) * 100,
-          nextFundingTime: toNumber(markData.nextFundingTime),
-        })
-        setFunding(mapFunding(fundingData))
-        setOpenInterest({ value: toNumber(oiData.openInterest), time: toNumber(oiData.time) })
-      } catch (err) {
-        if (!controller.signal.aborted) setError("Binance market feed unavailable")
-      }
-    }
+  const depthMax = useMemo(() => {
+    if (!book) return 1
+    return Math.max(...book.bids.map((level) => level.total), ...book.asks.map((level) => level.total), 1)
+  }, [book])
 
-    loadInitialData()
-
-    return () => {
-      active = false
-      controller.abort()
-    }
-  }, [pairSymbol, timeframe])
-
-  useEffect(() => {
-    const streamSymbol = pairSymbol.toLowerCase()
-    const streams = [
-      `${streamSymbol}@ticker`,
-      `${streamSymbol}@depth20@100ms`,
-      `${streamSymbol}@trade`,
-      `${streamSymbol}@markPrice@1s`,
-      `${streamSymbol}@kline_${timeframe}`,
-    ].join("/")
-    const socket = new WebSocket(`wss://fstream.binance.com/stream?streams=${streams}`)
-
-        socket.onmessage = (event) => {
-          const message = JSON.parse(event.data) as { stream?: string; data?: Record<string, unknown> }
-          const data = message.data
-          if (!data || !message.stream) return
-
-          if (message.stream.endsWith("@ticker")) {
-            setTicker({
-              price: toNumber(data.c),
-              change: toNumber(data.P),
-              high: toNumber(data.h),
-              low: toNumber(data.l),
-              volume: toNumber(data.v),
-              quoteVolume: toNumber(data.q),
-            })
-          }
-
-          if (message.stream.includes("@depth20")) {
-            setBids(mapDepth(data.b))
-            setAsks(mapDepth(data.a))
-          }
-
-          if (message.stream.endsWith("@trade")) {
-            setTrades((current) => [{ id: toNumber(data.t), price: toNumber(data.p), qty: toNumber(data.q), time: toNumber(data.T), side: (data.m ? "sell" : "buy") as "sell" | "buy" }, ...current].slice(0, 18))
-          }
-
-          if (message.stream.includes("@markPrice")) {
-            setMark({ markPrice: toNumber(data.p), indexPrice: toNumber(data.i), fundingRate: toNumber(data.r) * 100, nextFundingTime: toNumber(data.T) })
-          }
-
-          if (message.stream.includes("@kline_")) {
-            const k = data.k as Record<string, unknown> | undefined
-            if (!k) return
-            const candle = { t: toNumber(k.t), o: toNumber(k.o), h: toNumber(k.h), l: toNumber(k.l), c: toNumber(k.c), v: toNumber(k.v) }
-            setCandles((current) => {
-              const next = current.slice(-179)
-              const last = next[next.length - 1]
-              if (last?.t === candle.t) return [...next.slice(0, -1), candle]
-              return [...next, candle]
-            })
-          }
-        }
-
-
-    socket.onerror = () => setError("Realtime stream disconnected")
-    return () => socket.close()
-  }, [pairSymbol, timeframe])
+  const maSignal = useMemo(() => {
+    if (!indicators.sma20 || !indicators.sma50) return null
+    if (indicators.sma20 > indicators.sma50) return 'SMA 20 above SMA 50'
+    return 'SMA 20 below SMA 50'
+  }, [indicators])
 
   return (
-    <div className="min-h-screen bg-[#07090d] text-zinc-100">
+    <div className="min-h-[100dvh] bg-void">
       <Header />
 
-      <main className="mx-auto max-w-[1440px] px-4 py-4 md:px-6">
-        <section className="grid grid-cols-1 gap-3 border-b border-zinc-800 pb-4 lg:grid-cols-[1.2fr_2fr]">
-          <div className="space-y-2">
-            <div className="flex items-baseline gap-3">
-              <h1 className="text-3xl font-semibold tracking-tight text-white md:text-5xl">{baseSymbol}</h1>
-              <span className="font-mono text-xs text-zinc-500">USDT PERP</span>
+      <main className="mx-auto max-w-[1440px] px-4 py-6 lg:px-6">
+        <div className="flex flex-wrap items-center gap-4">
+          <Link
+            href={ROUTES.markets}
+            className="flex items-center gap-1.5 text-[12.5px] text-ink-3 transition-colors hover:text-accent"
+          >
+            <ArrowLeft size={12} aria-hidden />
+            All contracts
+          </Link>
+          <span className="text-ink-3" aria-hidden>
+            /
+          </span>
+          <span className="num text-[12.5px] text-ink-2">{market.pair}</span>
+
+          <span className="ml-auto flex items-center gap-3">
+            <span
+              className="num text-[10.5px] uppercase tracking-[0.12em]"
+              style={{ color: status === 'open' ? 'var(--color-long)' : 'var(--color-ink-3)' }}
+            >
+              {status === 'open'
+                ? feed.derivatives
+                  ? 'Streaming futures'
+                  : 'Streaming spot'
+                : status === 'closed'
+                  ? 'Offline'
+                  : 'Connecting'}
+            </span>
+            {status === 'open' && <span className="live-pip" aria-hidden />}
+            <button
+              type="button"
+              onClick={refresh}
+              className="btn btn-ghost size-8"
+              aria-label="Re-sync market data"
+            >
+              <ArrowsClockwise size={13} aria-hidden />
+            </button>
+          </span>
+        </div>
+
+        {/* Symbol header */}
+        <section className="mt-5 grid gap-6 border-b border-line pb-6 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-semibold tracking-tight text-ink">{market.base}</h1>
+              <span className="pill">USDT perpetual</span>
             </div>
-            <div className="font-mono text-3xl font-medium tracking-tight md:text-4xl">{formatPrice(ticker.price || market.price)}</div>
-            <div className={`font-mono text-sm ${ticker.change >= 0 ? "text-emerald-400" : "text-red-400"}`}>{formatPercent(ticker.change || market.change24h)} 24h</div>
-            {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</div>}
+            <p className="mt-1.5 text-[13px] text-ink-3">{market.name}</p>
+
+            <div className="mt-5 flex flex-wrap items-baseline gap-4">
+              <span className="num text-[34px] leading-none font-semibold tracking-tight text-ink">
+                {ticker ? formatPrice(ticker.price) : '...'}
+              </span>
+              {ticker && <ChangeTag value={changePct} size="lg" />}
+            </div>
+
+            <p className="mt-3 text-[12px] text-ink-3">
+              {ticker
+                ? `24h range ${formatPrice(ticker.low)} to ${formatPrice(ticker.high)}`
+                : 'Waiting for the ticker snapshot'}
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Link href={ROUTES.liveComp(1)} className="btn btn-primary px-4 py-2.5">
+                Trade {market.base}
+                <ArrowRight size={13} aria-hidden />
+              </Link>
+              <Link href={ROUTES.competitions} className="btn btn-ghost px-4 py-2.5">
+                Rounds on {market.base}
+              </Link>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-800 md:grid-cols-3">
-            {stats.map((s) => (
-              <div key={s.k} className="bg-[#0b0e13] p-4">
-                <div className="text-xs text-zinc-500">{s.k}</div>
-                <div className="mt-2 font-mono text-sm text-zinc-100">{s.v}</div>
-              </div>
-            ))}
-          </div>
+          {/*
+            The headline stats swap wholesale with the feed. On futures they lead
+            with mark price and funding, which is what a perp trader watches. On
+            spot those fields do not exist, so showing them would mean four cells
+            stuck on a placeholder forever. The spot set leads with the last price
+            and the session range instead.
+          */}
+          <dl className="grid grid-cols-2 divide-line overflow-hidden rounded-card border border-line bg-surface md:grid-cols-3 md:divide-x md:divide-y-0 lg:grid-cols-3">
+            {feed.derivatives ? (
+              <>
+                <div className="divide-y divide-line md:col-span-1">
+                  <StatCell label="Mark price" value={mark ? formatPrice(mark.markPrice) : '...'} />
+                  <StatCell label="Index price" value={mark ? formatPrice(mark.indexPrice) : '...'} />
+                </div>
+                <div className="divide-y divide-line">
+                  <StatCell
+                    label="Funding rate"
+                    value={mark ? formatPctPlain(mark.fundingRatePct) : '...'}
+                    tone={mark && mark.fundingRatePct >= 0 ? 'var(--color-long)' : 'var(--color-short)'}
+                  />
+                  <StatCell
+                    label="Next funding"
+                    value={mark ? formatClock(mark.nextFundingTime, false) : '...'}
+                  />
+                </div>
+                <div className="divide-y divide-line">
+                  <StatCell label="24h volume" value={ticker ? formatUsd(ticker.quoteVolume) : '...'} />
+                  <StatCell
+                    label="Open interest"
+                    value={openInterest ? `${formatQty(openInterest.value, 0)} ${market.base}` : '...'}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="divide-y divide-line md:col-span-1">
+                  <StatCell label="Last price" value={ticker ? formatPrice(ticker.price) : '...'} />
+                  <StatCell label="24h high" value={ticker ? formatPrice(ticker.high) : '...'} />
+                </div>
+                <div className="divide-y divide-line">
+                  <StatCell label="24h low" value={ticker ? formatPrice(ticker.low) : '...'} />
+                  <StatCell label="VWAP 24h" value={ticker ? formatPrice(ticker.vwap) : '...'} />
+                </div>
+                <div className="divide-y divide-line">
+                  <StatCell label="24h volume" value={ticker ? formatUsd(ticker.quoteVolume) : '...'} />
+                  <StatCell label="Fills 24h" value={ticker ? formatNumber(ticker.trades) : '...'} />
+                </div>
+              </>
+            )}
+          </dl>
         </section>
 
-        <section className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0e13]">
-              <div className="flex flex-col gap-3 border-b border-zinc-800 p-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-sm text-zinc-300">{pairSymbol}</span>
-                  <span className={`rounded-full px-2 py-1 font-mono text-xs ${ticker.change >= 0 ? "bg-emerald-400/10 text-emerald-300" : "bg-red-400/10 text-red-300"}`}>{formatPercent(ticker.change)}</span>
+        {error && !ticker ? (
+          <div className="panel mt-5">
+            <ErrorState
+              title="Binance feed unavailable"
+              message={error}
+              onRetry={refresh}
+            />
+          </div>
+        ) : (
+          <section className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+            {/* Chart and statistics */}
+            <div className="flex flex-col gap-5">
+              <div className="panel overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="num text-[13px] text-ink">{market.pair}</span>
+                    <span className="label">{timeframe}</span>
+                    {loading && <span className="num text-[11px] text-ink-3">loading</span>}
+                  </div>
+                  <div role="group" aria-label="Chart interval" className="flex gap-1">
+                    {TIMEFRAMES.map((option) => {
+                      const selected = option === timeframe
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => setTimeframe(option)}
+                          aria-pressed={selected}
+                          className="num rounded-control px-2.5 py-1.5 text-[11.5px] transition-colors"
+                          style={{
+                            color: selected ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                            backgroundColor: selected ? 'var(--color-accent-soft)' : 'transparent',
+                          }}
+                        >
+                          {option}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-1 rounded-xl bg-zinc-950 p-1">
-                  {TIMEFRAMES.map((tf) => (
-                    <button
-                      key={tf}
-                      onClick={() => setTimeframe(tf)}
-                      className={`rounded-lg px-3 py-1.5 font-mono text-xs transition active:scale-[0.98] ${timeframe === tf ? "bg-zinc-100 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"}`}
+
+                <div className="px-2 py-3">
+                  <CandlestickChart candles={candles} height={400} volume axis />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-line px-4 py-2.5">
+                  <span className="num text-[11px] text-ink-3">
+                    Last {formatClock(ticker?.updatedAt ?? 0)}
+                  </span>
+                  <span className="num text-[11px] text-ink-3">
+                    {formatNumber(candles.length)} periods loaded
+                  </span>
+                  <span className="num ml-auto text-[11px] text-ink-3">
+                    {status === 'open' ? 'Live' : 'Polling'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="panel overflow-hidden">
+                <div role="tablist" aria-label="Market statistics" className="flex overflow-x-auto border-b border-line px-1.5 py-1.5">
+                  {visibleTabs.map((option) => {
+                    const selected = option === tab
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        role="tab"
+                        aria-selected={selected}
+                        onClick={() => setTab(option)}
+                        className="rounded-control px-3.5 py-2 text-[12.5px] font-medium whitespace-nowrap transition-colors"
+                        style={{
+                          color: selected ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                          backgroundColor: selected ? 'var(--color-accent-soft)' : 'transparent',
+                        }}
+                      >
+                        {option}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {tab === 'Overview' && (
+                  <div className="grid gap-px bg-line sm:grid-cols-2 lg:grid-cols-3">
+                    {[
+                      ['24h open', ticker ? formatPrice(ticker.price - ticker.priceChange) : '...'],
+                      ['24h change', ticker ? `${formatPrice(Math.abs(ticker.priceChange))} (${changePct.toFixed(2)}%)` : '...'],
+                      ['24h high', ticker ? formatPrice(ticker.high) : '...'],
+                      ['24h low', ticker ? formatPrice(ticker.low) : '...'],
+                      ['VWAP 24h', ticker ? formatPrice(ticker.vwap) : '...'],
+                      ['Fills 24h', ticker ? formatNumber(ticker.trades) : '...'],
+                      ['Base volume', ticker ? `${formatQty(ticker.volume, 2)} ${market.base}` : '...'],
+                      ['Quote volume', ticker ? formatUsd(ticker.quoteVolume) : '...'],
+                    ]
+                      // Open interest is futures-only, so the row is omitted on spot
+                      // rather than rendering a permanent placeholder.
+                      .concat(
+                        feed.derivatives
+                          ? [
+                              [
+                                'Open interest',
+                                openInterest
+                                  ? `${formatQty(openInterest.value, 2)} ${market.base}`
+                                  : '...',
+                              ],
+                            ]
+                          : [],
+                      )
+                      .map(([label, value]) => (
+                      <div key={label} className="bg-surface px-4 py-4">
+                        <p className="label">{label}</p>
+                        <p className="num mt-2 text-[14px] text-ink">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {tab === 'Funding' && feed.derivatives && (
+                  <div>
+                    <div className="grid grid-cols-3 border-b border-line px-4 py-2.5">
+                      <span className="label">Settled at</span>
+                      <span className="label text-right">Rate</span>
+                      <span className="label text-right">Who pays</span>
+                    </div>
+                    {fundingHistory.length === 0 && (
+                      <p className="px-4 py-10 text-center text-[13px] text-ink-2">
+                        No funding settlements returned for this contract yet.
+                      </p>
+                    )}
+                    {fundingHistory.map((point) => (
+                      <div
+                        key={point.time}
+                        className="grid grid-cols-3 items-center border-b border-line px-4 py-2.5 last:border-b-0"
+                      >
+                        <span className="num text-[12.5px] text-ink-3">
+                          {formatClock(point.time, false)}
+                        </span>
+                        <span
+                          className="num text-right text-[12.5px]"
+                          style={{
+                            color: point.ratePct >= 0 ? 'var(--color-long)' : 'var(--color-short)',
+                          }}
+                        >
+                          {formatPctPlain(point.ratePct)}
+                        </span>
+                        <span className="text-right text-[12px] text-ink-3">
+                          {point.ratePct >= 0 ? 'Longs pay shorts' : 'Shorts pay longs'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {tab === 'Technicals' && (
+                  <div className="grid gap-px bg-line sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      {
+                        label: 'RSI 14',
+                        value: indicators.rsiValue !== null ? indicators.rsiValue.toFixed(1) : '...',
+                        note:
+                          indicators.rsiValue === null
+                            ? 'Needs 15 periods'
+                            : indicators.rsiValue >= 70
+                              ? 'Above 70, stretched'
+                              : indicators.rsiValue <= 30
+                                ? 'Below 30, stretched'
+                                : 'Between 30 and 70',
+                      },
+                      {
+                        label: 'SMA 20',
+                        value: indicators.sma20 ? formatPrice(indicators.sma20) : '...',
+                        note: indicators.last && indicators.sma20
+                          ? indicators.last >= indicators.sma20
+                            ? 'Price above'
+                            : 'Price below'
+                          : 'Needs 20 periods',
+                      },
+                      {
+                        label: 'SMA 50',
+                        value: indicators.sma50 ? formatPrice(indicators.sma50) : '...',
+                        note: maSignal ?? 'Needs 50 periods',
+                      },
+                      {
+                        label: 'Range 48',
+                        value: indicators.atr ? formatPrice(indicators.atr) : '...',
+                        note: 'Mean high to low, last 48 periods',
+                      },
+                    ].map((item) => (
+                      <div key={item.label} className="bg-surface px-4 py-4">
+                        <p className="label">{item.label}</p>
+                        <p className="num mt-2 text-[16px] text-ink">{item.value}</p>
+                        <p className="mt-1.5 text-[11.5px] text-ink-3">{item.note}</p>
+                      </div>
+                    ))}
+                    <p className="bg-surface px-4 py-3 text-[11.5px] text-ink-3 sm:col-span-2 lg:col-span-4">
+                      Computed from the {timeframe} candle series currently loaded, which covers roughly
+                      the last {candles.length} periods. Nothing here is a prediction.
+                    </p>
+                  </div>
+                )}
+
+                {tab === 'Sessions' && (
+                  <div className="divide-y divide-line">
+                    <div className="flex items-start gap-3 px-4 py-4">
+                      <Info size={14} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />
+                      <p className="text-[13px] leading-relaxed text-ink-2">
+                        Binance USD-M futures trade continuously, so there is no opening or closing
+                        auction to lean on. Funding settles every eight hours, and the 24 hour window
+                        above is a rolling one rather than a session.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-3 px-4 py-3">
+                      <span className="label">Last update</span>
+                      <span className="label text-right">Time</span>
+                      <span className="label text-right">Age</span>
+                    </div>
+                    <div className="grid grid-cols-3 px-4 py-2.5">
+                      <span className="text-[12.5px] text-ink-2">Ticker</span>
+                      <span className="num text-right text-[12.5px] text-ink">
+                        {formatClock(ticker?.updatedAt ?? 0)}
+                      </span>
+                      <span className="num text-right text-[12.5px] text-ink-3">
+                        {formatRelative(ticker?.updatedAt ?? 0)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 px-4 py-2.5">
+                      <span className="text-[12.5px] text-ink-2">Mark and funding</span>
+                      <span className="num text-right text-[12.5px] text-ink">
+                        {formatClock(mark?.updatedAt ?? 0)}
+                      </span>
+                      <span className="num text-right text-[12.5px] text-ink-3">
+                        {formatRelative(mark?.updatedAt ?? 0)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 px-4 py-2.5">
+                      <span className="text-[12.5px] text-ink-2">Open interest</span>
+                      <span className="num text-right text-[12.5px] text-ink">
+                        {formatClock(openInterest?.time ?? 0)}
+                      </span>
+                      <span className="num text-right text-[12.5px] text-ink-3">
+                        {formatRelative(openInterest?.time ?? 0)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Book, depth and tape */}
+            <aside className="flex flex-col gap-5">
+              <div className="panel overflow-hidden">
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                  <span className="text-[13px] text-ink-2">Order book</span>
+                  <span className="num text-[11px] text-ink-3">
+                    {book ? formatPctPlain(book.spreadPct) : '...'} spread
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 px-4 py-2">
+                  <span className="label">Price</span>
+                  <span className="label text-right">Size</span>
+                  <span className="label text-right">Total</span>
+                </div>
+
+                <div>
+                  {[...(book?.asks ?? [])].reverse().map((level) => (
+                    <div
+                      key={`ask-${level.price}`}
+                      className="relative grid grid-cols-3 px-4 py-1"
                     >
-                      {tf}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="p-3">
-                <CandlestickChart height={420} candles={candles} />
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0e13]">
-              <div className="flex overflow-x-auto border-b border-zinc-800 p-1">
-                {STAT_TABS.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setStatTab(t)}
-                    className={`rounded-xl px-4 py-2 text-sm capitalize transition active:scale-[0.98] ${statTab === t ? "bg-zinc-100 text-zinc-950" : "text-zinc-500 hover:text-zinc-200"}`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-
-              {statTab === "overview" && (
-                <div className="grid grid-cols-1 divide-y divide-zinc-800 md:grid-cols-2 md:divide-x md:divide-y-0">
-                  <div className="p-5">
-                    <div className="text-sm text-zinc-500">Open Interest</div>
-                    <div className="mt-2 font-mono text-3xl">{formatCompact(openInterest.value)} {baseSymbol}</div>
-                    <div className="mt-1 text-xs text-zinc-600">Updated {formatTime(openInterest.time)}</div>
-                  </div>
-                  <div className="p-5">
-                    <div className="text-sm text-zinc-500">Quote Volume</div>
-                    <div className="mt-2 font-mono text-3xl">${formatCompact(ticker.quoteVolume)}</div>
-                    <div className="mt-1 text-xs text-zinc-600">Realtime 24h ticker</div>
-                  </div>
-                </div>
-              )}
-
-              {statTab === "funding" && (
-                <div className="divide-y divide-zinc-800">
-                  {funding.map((row) => (
-                    <div key={row.fundingTime} className="grid grid-cols-3 px-5 py-3 font-mono text-sm">
-                      <span className="text-zinc-500">{formatTime(row.fundingTime)}</span>
-                      <span className="text-right text-zinc-100">{row.fundingRate.toFixed(4)}%</span>
-                      <span className={`text-right ${row.fundingRate >= 0 ? "text-emerald-400" : "text-red-400"}`}>{row.fundingRate >= 0 ? "Longs pay" : "Shorts pay"}</span>
+                      <span
+                        className="pointer-events-none absolute inset-y-0 right-0"
+                        style={{
+                          width: `${(level.total / depthMax) * 100}%`,
+                          backgroundColor: 'rgba(248, 113, 113, 0.09)',
+                        }}
+                      />
+                      <span className="num relative text-[12px] text-short">
+                        {formatPrice(level.price)}
+                      </span>
+                      <span className="num relative text-right text-[12px] text-ink-2">
+                        {formatQty(level.qty, 3)}
+                      </span>
+                      <span className="num relative text-right text-[12px] text-ink-3">
+                        {formatQty(level.total, 3)}
+                      </span>
                     </div>
                   ))}
                 </div>
-              )}
 
-              {statTab === "mark" && (
-                <div className="grid grid-cols-1 gap-px bg-zinc-800 md:grid-cols-3">
-                  {[
-                    ["Mark", formatPrice(mark.markPrice)],
-                    ["Index", formatPrice(mark.indexPrice)],
-                    ["Next Funding", formatTime(mark.nextFundingTime)],
-                  ].map(([label, value]) => (
-                    <div key={label} className="bg-[#0b0e13] p-5">
-                      <div className="text-sm text-zinc-500">{label}</div>
-                      <div className="mt-2 font-mono text-xl">{value}</div>
+                <div className="flex items-baseline justify-between border-y border-line bg-surface-2 px-4 py-2.5">
+                  <span className="num text-[17px] font-semibold" style={{ color: positive ? 'var(--color-long)' : 'var(--color-short)' }}>
+                    {ticker ? formatPrice(ticker.price) : '...'}
+                  </span>
+                  <ChangeTag value={changePct} size="sm" />
+                </div>
+
+                <div>
+                  {book?.bids.map((level) => (
+                    <div
+                      key={`bid-${level.price}`}
+                      className="relative grid grid-cols-3 px-4 py-1"
+                    >
+                      <span
+                        className="pointer-events-none absolute inset-y-0 right-0"
+                        style={{
+                          width: `${(level.total / depthMax) * 100}%`,
+                          backgroundColor: 'rgba(52, 211, 153, 0.09)',
+                        }}
+                      />
+                      <span className="num relative text-[12px] text-long">
+                        {formatPrice(level.price)}
+                      </span>
+                      <span className="num relative text-right text-[12px] text-ink-2">
+                        {formatQty(level.qty, 3)}
+                      </span>
+                      <span className="num relative text-right text-[12px] text-ink-3">
+                        {formatQty(level.total, 3)}
+                      </span>
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
 
-              {statTab === "technicals" && (
-                <div className="grid grid-cols-1 gap-px bg-zinc-800 md:grid-cols-4">
-                  {technicals.map((item) => (
-                    <div key={item.label} className="bg-[#0b0e13] p-5">
-                      <div className="text-sm text-zinc-500">{item.label}</div>
-                      <div className="mt-2 font-mono text-xl">{item.value}</div>
-                      <div className="mt-1 text-xs text-zinc-600">{item.hint}</div>
+              <div className="panel overflow-hidden">
+                <div className="border-b border-line px-4 py-3">
+                  <span className="text-[13px] text-ink-2">Cumulative depth</span>
+                </div>
+                <div className="px-4 py-4">
+                  <DepthChart bids={book?.bids ?? []} asks={book?.asks ?? []} height={132} />
+                </div>
+              </div>
+
+              <div className="panel overflow-hidden">
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                  <span className="text-[13px] text-ink-2">Recent fills</span>
+                  <span className="num text-[11px] text-ink-3">{trades.length} shown</span>
+                </div>
+                <div>
+                  {trades.length === 0 && (
+                    <p className="px-4 py-8 text-center text-[12.5px] text-ink-2">
+                      No fills reported yet.
+                    </p>
+                  )}
+                  {trades.map((trade) => (
+                    <div
+                      key={trade.id}
+                      className="grid grid-cols-3 border-b border-line px-4 py-1.5 last:border-b-0"
+                    >
+                      <span
+                        className="num text-[12px]"
+                        style={{
+                          color: trade.side === 'buy' ? 'var(--color-long)' : 'var(--color-short)',
+                        }}
+                      >
+                        {formatPrice(trade.price)}
+                      </span>
+                      <span className="num text-right text-[12px] text-ink-2">
+                        {formatQty(trade.qty, 4)}
+                      </span>
+                      <span className="num text-right text-[12px] text-ink-3">
+                        {formatClock(trade.time)}
+                      </span>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
 
-          <aside className="space-y-4">
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0e13]">
-              <div className="border-b border-zinc-800 p-4 text-sm text-zinc-400">Order book</div>
-              <div className="grid grid-cols-3 px-4 py-2 font-mono text-[11px] text-zinc-600">
-                <span>Price</span>
-                <span className="text-right">Qty</span>
-                <span className="text-right">Total</span>
-              </div>
-              <div className="divide-y divide-zinc-900">
-                {asks.slice().reverse().map((row) => (
-                  <div key={`ask-${row.price}`} className="relative grid grid-cols-3 px-4 py-1.5 font-mono text-xs">
-                    <span className="relative z-10 text-red-300">{formatPrice(row.price)}</span>
-                    <span className="relative z-10 text-right text-zinc-400">{row.qty.toFixed(3)}</span>
-                    <span className="relative z-10 text-right text-zinc-500">{row.total.toFixed(3)}</span>
-                    <span className="absolute inset-y-0 right-0 bg-red-500/10" style={{ width: `${(row.total / depthMax) * 100}%` }} />
+              <div className="panel p-4">
+                <p className="text-[13px] text-ink-2">Contract details</p>
+                <dl className="mt-3 flex flex-col">
+                  <div className="flex items-center justify-between border-b border-line py-2">
+                    <dt className="text-[12px] text-ink-3">Symbol</dt>
+                    <dd className="num text-[12px] text-ink">{market.symbol}</dd>
                   </div>
-                ))}
-              </div>
-              <div className="border-y border-zinc-800 px-4 py-3 font-mono text-lg">{formatPrice(ticker.price)}</div>
-              <div className="divide-y divide-zinc-900">
-                {bids.map((row) => (
-                  <div key={`bid-${row.price}`} className="relative grid grid-cols-3 px-4 py-1.5 font-mono text-xs">
-                    <span className="relative z-10 text-emerald-300">{formatPrice(row.price)}</span>
-                    <span className="relative z-10 text-right text-zinc-400">{row.qty.toFixed(3)}</span>
-                    <span className="relative z-10 text-right text-zinc-500">{row.total.toFixed(3)}</span>
-                    <span className="absolute inset-y-0 right-0 bg-emerald-500/10" style={{ width: `${(row.total / depthMax) * 100}%` }} />
+                  <div className="flex items-center justify-between border-b border-line py-2">
+                    <dt className="text-[12px] text-ink-3">Margin asset</dt>
+                    <dd className="num text-[12px] text-ink">USDT</dd>
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0e13]">
-              <div className="border-b border-zinc-800 p-4 text-sm text-zinc-400">Live tape</div>
-              <div className="divide-y divide-zinc-900">
-                {trades.map((trade) => (
-                  <div key={trade.id} className="grid grid-cols-3 px-4 py-2 font-mono text-xs">
-                    <span className={trade.side === "buy" ? "text-emerald-300" : "text-red-300"}>{formatPrice(trade.price)}</span>
-                    <span className="text-right text-zinc-400">{trade.qty.toFixed(4)}</span>
-                    <span className="text-right text-zinc-600">{formatTime(trade.time)}</span>
+                  <div className="flex items-center justify-between py-2">
+                    <dt className="text-[12px] text-ink-3">Tick source</dt>
+                    <dd className="num text-[12px] text-ink">Binance futures</dd>
                   </div>
-                ))}
+                </dl>
               </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0e13] p-4">
-              <div className="text-sm text-zinc-400">Quick trade</div>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button className="rounded-xl bg-emerald-300 px-4 py-3 text-sm font-semibold text-zinc-950 transition active:scale-[0.98]">Long</button>
-                <button className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-200 transition active:scale-[0.98]">Short</button>
-              </div>
-              <button className="mt-3 w-full rounded-xl bg-zinc-100 px-4 py-3 text-sm font-semibold text-zinc-950 transition active:scale-[0.98]" onClick={() => router.push(ROUTES.liveComp(1))}>
-                Trade {baseSymbol}
-              </button>
-            </div>
-          </aside>
-        </section>
+            </aside>
+          </section>
+        )}
       </main>
     </div>
   )

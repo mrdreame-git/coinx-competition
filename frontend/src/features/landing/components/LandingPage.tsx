@@ -1,480 +1,355 @@
-import { ArrowDown, Trophy, ChartLineUp, ArrowUp, Medal, CurrencyUsd, Balance, ArrowCircleRight, ArrowCircleLeft, LockSimple, Info } from "@phosphor-icons/react"
+import Image from 'next/image'
+import Link from 'next/link'
+import {
+  ArrowRight,
+  Broadcast,
+  ChartLineUp,
+  Crosshair,
+  Lock,
+  Scales,
+  ShieldCheck,
+  Timer,
+  Trophy,
+  Wallet,
+} from '@phosphor-icons/react/dist/ssr'
+import { ROUTES } from '@/config/app'
+import { COMPETITIONS } from '@/mocks/competitions'
+import { LEADERBOARD_DATA } from '@/mocks/leaderboard'
+import MarketingNav from '@/features/landing/components/MarketingNav'
+import HeroMarketPanel from '@/features/landing/components/HeroMarketPanel'
+import LiveNumbers from '@/features/landing/components/LiveNumbers'
+import LiveCompetitions from '@/features/landing/components/LiveCompetitions'
+import TickerTape from '@/components/common/TickerTape'
+import LeaderboardTable from '@/components/common/LeaderboardTable'
+import Reveal, { RevealItem, RevealList } from '@/components/common/Reveal'
+import SiteFooter from '@/components/layout/SiteFooter'
 
-import Link from "next/link"
-import { ROUTES } from "@/config/app"
-import Orbs from "@/components/common/Orbs"
-import CompetitionCard from "@/features/competitions/components/CompetitionCard"
-import { COMPETITIONS } from "@/mocks/competitions"
+/**
+ * Landing page.
+ *
+ * Design read: consumer trading-competition landing for competitive retail
+ * traders, dark terminal language, Tailwind v4 + Phosphor + Motion on a
+ * Geist / Geist Mono stack. Dials 7 / 6 / 4.
+ *
+ * Layout families, none repeated back to back: split hero, live tape, metric row,
+ * featured-plus-stack, sticky heading with steps, bento, table, disclosure list,
+ * closing band. Exactly one marquee on the page (the tape). Two eyebrows total
+ * across nine sections.
+ */
 
-const STATS = [
-  ["$2.4M+", "PRIZES PAID"],
-  ["50K+", "TRADERS"],
-  ["99.9%", "UPTIME"],
-] as const
+const STEPS = [
+  {
+    icon: Timer,
+    title: 'Enter a round',
+    body: 'Pick an open round and put down the entry fee. Seats are capped, and the pool stops growing the moment the timer starts.',
+  },
+  {
+    icon: ChartLineUp,
+    title: 'Trade the window',
+    body: 'Long or short the listed pair with market and limit orders. Every entry starts on the same balance, so position sizing is the only variable you control.',
+  },
+  {
+    icon: Crosshair,
+    title: 'Rank live',
+    body: 'The board re-sorts on every fill. Percent return is the only ranking input, so a small account on a good read beats a large one on a bad one.',
+  },
+  {
+    icon: Wallet,
+    title: 'Settle and withdraw',
+    body: 'Open positions close when the window ends and the pool pays out by tier. The prize lands in your wallet, ready to withdraw or roll into the next round.',
+  },
+]
 
-  const STEPS = [
-    { n: "01", label: "DEPOSIT", icon: <ArrowDown size={24} className="text-zinc-400" /> },
-    { n: "02", label: "CHOOSE", icon: <Trophy size={24} className="text-zinc-400" /> },
-    { n: "03", label: "TRADE", icon: <ChartLineUp size={24} className="text-zinc-400" /> },
-    { n: "04", label: "CLIMB", icon: <ArrowUp size={24} className="text-zinc-400" /> },
-    { n: "05", label: "WIN", icon: <Medal size={24} className="text-zinc-400" /> },
-    { n: "06", label: "WITHDRAW", icon: <CurrencyUsd size={24} className="text-zinc-400" /> },
-  ]
+const PRINCIPLES = [
+  {
+    icon: Scales,
+    title: 'Equal starting capital',
+    body: 'Deposit size never touches the scoreboard. Everyone in a round opens with the same balance and the same pair.',
+  },
+  {
+    icon: Broadcast,
+    title: 'Public pools',
+    body: 'The entry fee is published before you commit, and the pool is the sum of the entries taken.',
+  },
+  {
+    icon: Lock,
+    title: 'Fixed windows',
+    body: 'Rounds open and close on a published clock. No extensions and no discretionary calls mid-round.',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'One fee, stated up front',
+    body: 'A flat fee per fill. No spread markup, no deduction taken out of the payout tier.',
+  },
+]
 
-
-  const FEATURES = [
-    {
-      title: "Fair Competition",
-      desc: "All traders start with identical capital. Pure skill wins.",
-      icon: <Balance size={32} className="text-zinc-400" />,
-    },
-    {
-      title: "Real-time Ranking",
-      desc: "Watch your rank update live as you trade.",
-      icon: <ArrowCircleRight size={32} className="text-zinc-400" />,
-    },
-    {
-      title: "Secure Wallet",
-      desc: "Multi-sig cold storage. Your funds are protected.",
-      icon: <LockSimple size={32} className="text-zinc-400" />,
-    },
-    {
-      title: "Transparent Rules",
-      desc: "Clear, simple rules. No hidden fees or surprises.",
-      icon: <Info size={32} className="text-zinc-400" />,
-    },
-    {
-      title: "Fast Withdrawals",
-      desc: "Prizes credited instantly. Withdraw in minutes.",
-      icon: <ArrowCircleLeft size={32} className="text-zinc-400" />,
-    },
-  ]
+const RULES: [string, string][] = [
+  ['Ranking input', 'Percent return on the starting balance, realised plus unrealised'],
+  ['Leverage ceiling', '10x on listed perpetuals, fixed before the round opens'],
+  ['Order types', 'Market and limit, with optional take profit and stop loss'],
+  ['Fill fee', '0.05% of notional per side'],
+  ['Payout tiers', 'Top 20 places by rank, schedule published with each round'],
+  ['Settlement', 'Positions closed at the closing mark, payouts credited immediately'],
+]
 
 export default function LandingPage() {
+  const openRounds = COMPETITIONS.filter((comp) => comp.status !== 'finished')
+
   return (
-    <div className="min-h-screen bg-grid" style={{ background: "#080D18" }}>
-      <section className="relative min-h-screen flex flex-col">
-        <Orbs variant="hero" />
-        <div className="relative z-10 flex items-center justify-between px-8 py-6 max-w-7xl mx-auto w-full">
-          <Link href={ROUTES.landing}>
-            <Image
-              src="/coinx-logo-long.png"
-              alt="COINX"
-              width={130}
-              height={24}
-              priority
-              style={{ width: "130px", height: "auto" }}
-            />
-          </Link>
-          <nav className="hidden md:flex items-center gap-8">
-            {["Competitions", "How It Works", "Prizes"].map((l) => (
-              <a
-                key={l}
-                href="#"
-                className="text-sm font-medium transition-colors hover:text-white"
-                style={{ color: "#A4AEC0" }}
-              >
-                {l}
-              </a>
-            ))}
-          </nav>
-          <div className="flex items-center gap-3">
-            <Link
-              href={ROUTES.login}
-              className="btn-ghost text-sm px-5 py-2.5 rounded-xl"
-            >
-              Login
-            </Link>
-            <Link
-              href={ROUTES.register}
-              className="btn-cyan text-sm px-5 py-2.5 rounded-xl"
-            >
-              Get Started
-            </Link>
+    <div className="min-h-[100dvh] bg-void">
+      <MarketingNav />
+
+      {/* Hero: asymmetric split, four text elements only, no stat row or trust
+          strip inside it. CTAs sit above the fold on a laptop viewport. */}
+      <section className="mx-auto max-w-[1440px] px-6 pt-24 pb-16 lg:pt-28">
+        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-16">
+          <div>
+            <p className="label">Timed crypto competitions</p>
+
+            <h1 className="mt-5 max-w-[16ch] text-5xl leading-[1.05] font-semibold tracking-tight text-balance text-ink md:text-6xl">
+              Ranked by return, not by deposit.
+            </h1>
+
+            <p className="mt-6 max-w-[52ch] text-[15px] leading-relaxed text-ink-2">
+              Everyone starts on the same balance. Trade live crypto futures for a fixed window;
+              highest percent return takes the pool.
+            </p>
+
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <Link href={ROUTES.register} className="btn btn-primary px-5 py-3">
+                Create account
+              </Link>
+              <Link href="#competitions" className="btn btn-ghost px-5 py-3">
+                See open rounds
+              </Link>
+            </div>
           </div>
+
+          <Reveal y={24}>
+            <HeroMarketPanel />
+          </Reveal>
+        </div>
+      </section>
+
+      {/* The single marquee on this page. Live prices, not decoration. */}
+      <TickerTape />
+
+      <LiveNumbers />
+
+      {/* Featured round plus a stacked pair. Deliberately not three equal cards. */}
+      <section id="competitions" className="mx-auto max-w-[1440px] scroll-mt-20 px-6 py-20">
+        <div className="max-w-[62ch]">
+          <h2 className="text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+            Rounds open now
+          </h2>
+          <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
+            Each round publishes its pair, window, entry fee and prize pool before entries close.
+            {` ${openRounds.length} rounds are taking entrants right now.`}
+          </p>
         </div>
 
-        <div className="relative z-10 flex-1 flex items-center">
-          <div className="max-w-7xl mx-auto px-8 w-full grid md:grid-cols-2 gap-12 items-center py-16">
-            <div>
-              <div
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold mb-6"
-                style={{
-                  background: "rgba(0,200,255,0.08)",
-                  border: "1px solid rgba(0,200,255,0.2)",
-                  color: "#00C8FF",
-                }}
-              >
-                <div className="live-dot" />
-                LIVE COMPETITIONS NOW
-              </div>
-              <h1 className="font-black text-6xl md:text-7xl leading-none tracking-tighter mb-6">
-                <span style={{ color: "#FFFFFF" }}>TRADE.</span>
-                <br />
-                <span className="gradient-text">COMPETE.</span>
-                <br />
-                <span style={{ color: "#FFFFFF" }}>WIN.</span>
-              </h1>
-              <p
-                className="text-lg mb-8 leading-relaxed max-w-lg"
-                style={{ color: "#A4AEC0" }}
-              >
-                Real crypto trading competitions. Trade against other players,
-                climb the leaderboard, and win real prizes.
-              </p>
-              <div className="flex items-center gap-4">
-                <Link
-                  href={ROUTES.register}
-                  className="btn-cyan text-base px-8 py-4 rounded-xl font-black tracking-wide"
-                >
-                  JOIN NOW
-                </Link>
-                <Link
-                  href={ROUTES.competitions}
-                  className="btn-ghost text-base px-8 py-4 rounded-xl"
-                >
-                  VIEW COMPETITIONS
-                </Link>
-              </div>
-              <div className="flex items-center gap-8 mt-10">
-                {STATS.map(([v, l]) => (
-                  <div key={l}>
-                    <div className="font-black text-2xl font-mono gradient-text-blue">
-                      {v}
-                    </div>
-                    <div
-                      className="text-xs mt-0.5"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      {l}
+        <div className="mt-10">
+          <LiveCompetitions />
+        </div>
+      </section>
+
+      {/* Sticky heading beside a step list. Asymmetric, and the steps carry verb
+          labels rather than "Stage 1" numbering. */}
+      <section id="ranking" className="scroll-mt-20 border-y border-line bg-surface/40 py-20">
+        <div className="mx-auto grid max-w-[1440px] gap-12 px-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:gap-20">
+          <div className="lg:sticky lg:top-24 lg:self-start">
+            <p className="label">How ranking works</p>
+            <h2 className="mt-5 max-w-[18ch] text-3xl leading-tight font-semibold tracking-tight text-ink md:text-4xl">
+              Four steps, one number on the board.
+            </h2>
+            <p className="mt-5 max-w-[46ch] text-[15px] leading-relaxed text-ink-2">
+              The format is built to keep the leaderboard readable: the same starting balance, the
+              same pair and the same clock, ranked on percent return.
+            </p>
+          </div>
+
+          <RevealList className="flex flex-col">
+            {STEPS.map((step) => {
+              const Icon = step.icon
+              return (
+                <RevealItem key={step.title} className="border-t border-line py-8 last:pb-0">
+                  <div className="flex items-start gap-5">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-control border border-line bg-surface-2">
+                      <Icon size={17} className="text-accent" aria-hidden />
+                    </span>
+                    <div>
+                      <h3 className="text-base font-semibold text-ink">{step.title}</h3>
+                      <p className="mt-2 max-w-[58ch] text-[14px] leading-relaxed text-ink-2">
+                        {step.body}
+                      </p>
                     </div>
                   </div>
-                ))}
+                </RevealItem>
+              )
+            })}
+          </RevealList>
+        </div>
+      </section>
+
+      {/* Bento: exactly six cells for four principles plus two photographs, and
+          the spans tile the grid with no holes. */}
+      <section className="mx-auto max-w-[1440px] px-6 py-20">
+        <h2 className="max-w-[24ch] text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+          Built so the ranking means something.
+        </h2>
+
+        <div className="mt-10 grid gap-5 lg:grid-cols-3">
+          <div className="relative overflow-hidden rounded-card border border-line lg:row-span-2">
+            <Image
+              src="https://picsum.photos/seed/coinx-trading-desk/800/1200?grayscale"
+              alt="A trading desk at night with market depth on screen"
+              width={800}
+              height={1200}
+              sizes="(max-width: 1024px) 100vw, 33vw"
+              className="h-full w-full object-cover"
+              style={{ minHeight: 240 }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  'linear-gradient(to top, rgba(8,9,11,0.94) 4%, rgba(8,9,11,0.12) 55%, rgba(8,9,11,0.4) 100%)',
+              }}
+            />
+            <p className="absolute inset-x-6 bottom-6 text-[14px] leading-relaxed text-ink">
+              Rounds run on live order books. The feed that prices your entry is the feed that ranks
+              the board.
+            </p>
+          </div>
+
+          {PRINCIPLES.slice(0, 2).map((principle) => {
+            const Icon = principle.icon
+            return (
+              <div
+                key={principle.title}
+                className="rounded-card border border-line bg-surface p-6 transition-colors hover:border-line-strong"
+              >
+                <Icon size={19} className="text-accent" aria-hidden />
+                <h3 className="mt-4 text-[15px] font-semibold text-ink">{principle.title}</h3>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2">{principle.body}</p>
               </div>
-            </div>
-            <div className="hidden md:flex items-center justify-center">
-              <div className="relative w-96 h-96">
-                <div
-                  className="absolute inset-0 rounded-full"
-                  style={{
-                    background:
-                      "radial-gradient(circle, rgba(109,74,255,0.2) 0%, transparent 70%)",
-                  }}
-                />
-                <svg viewBox="0 0 400 400" className="w-full h-full">
-                  <defs>
-                    <radialGradient id="coreGrad" cx="50%" cy="50%">
-                      <stop offset="0%" stopColor="#00C8FF" stopOpacity="0.9" />
-                      <stop
-                        offset="50%"
-                        stopColor="#1677FF"
-                        stopOpacity="0.6"
-                      />
-                      <stop
-                        offset="100%"
-                        stopColor="#6D4AFF"
-                        stopOpacity="0.2"
-                      />
-                    </radialGradient>
-                    <radialGradient id="ringGrad" cx="50%" cy="50%">
-                      <stop offset="0%" stopColor="#1677FF" stopOpacity="0.4" />
-                      <stop offset="100%" stopColor="#6D4AFF" stopOpacity="0" />
-                    </radialGradient>
-                    <filter id="glow">
-                      <feGaussianBlur stdDeviation="3" result="blur" />
-                      <feMerge>
-                        <feMergeNode in="blur" />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                  </defs>
-                  {[160, 130, 100].map((r, i) => (
-                    <circle
-                      key={i}
-                      cx="200"
-                      cy="200"
-                      r={r}
-                      fill="none"
-                      stroke={
-                        i === 0
-                          ? "rgba(109,74,255,0.2)"
-                          : i === 1
-                            ? "rgba(22,119,255,0.25)"
-                            : "rgba(0,200,255,0.3)"
-                      }
-                      strokeWidth="1"
-                      strokeDasharray={
-                        i === 0 ? "4 8" : i === 1 ? "2 6" : "none"
-                      }
-                    />
-                  ))}
-                  <polygon
-                    points="200,140 251,170 251,230 200,260 149,230 149,170"
-                    fill="url(#coreGrad)"
-                    filter="url(#glow)"
-                  />
-                  <polygon
-                    points="200,140 251,170 251,230 200,260 149,230 149,170"
-                    fill="none"
-                    stroke="rgba(0,200,255,0.6)"
-                    strokeWidth="1.5"
-                  />
-                  <polygon
-                    points="200,160 231,178 231,222 200,240 169,222 169,178"
-                    fill="rgba(8,13,24,0.7)"
-                  />
-                  <text
-                    x="200"
-                    y="205"
-                    textAnchor="middle"
-                    fill="#00C8FF"
-                    fontSize="22"
-                    fontWeight="900"
-                    fontFamily="JetBrains Mono"
-                  >
-                    ₿
-                  </text>
-                  {[0, 60, 120, 180, 240, 300].map((deg, i) => {
-                    const rad = (deg * Math.PI) / 180
-                    const cx = 200 + 155 * Math.cos(rad)
-                    const cy = 200 + 155 * Math.sin(rad)
-                    return (
-                      <circle
-                        key={i}
-                        cx={cx}
-                        cy={cy}
-                        r={i % 2 === 0 ? 4 : 2.5}
-                        fill={
-                          i % 3 === 0
-                            ? "#00C8FF"
-                            : i % 3 === 1
-                              ? "#1677FF"
-                              : "#6D4AFF"
-                        }
-                        filter="url(#glow)"
-                      />
-                    )
-                  })}
-                  {[0, 120, 240].map((deg, i) => {
-                    const rad = (deg * Math.PI) / 180
-                    const x2 = 200 + 155 * Math.cos(rad)
-                    const y2 = 200 + 155 * Math.sin(rad)
-                    return (
-                      <line
-                        key={i}
-                        x1="200"
-                        y1="200"
-                        x2={x2}
-                        y2={y2}
-                        stroke="rgba(0,200,255,0.15)"
-                        strokeWidth="1"
-                      />
-                    )
-                  })}
-                  <rect
-                    x="60"
-                    y="50"
-                    width="130"
-                    height="32"
-                    rx="8"
-                    fill="rgba(12,19,32,0.9)"
-                    stroke="rgba(0,200,255,0.2)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x="75"
-                    y="68"
-                    fill="#A4AEC0"
-                    fontSize="9"
-                    fontFamily="JetBrains Mono"
-                  >
-                    BTC/USDT
-                  </text>
-                  <text
-                    x="145"
-                    y="68"
-                    fill="#00D084"
-                    fontSize="10"
-                    fontWeight="700"
-                    fontFamily="JetBrains Mono"
-                  >
-                    +1.24%
-                  </text>
-                  <rect
-                    x="220"
-                    y="310"
-                    width="120"
-                    height="32"
-                    rx="8"
-                    fill="rgba(12,19,32,0.9)"
-                    stroke="rgba(109,74,255,0.2)"
-                    strokeWidth="1"
-                  />
-                  <text
-                    x="235"
-                    y="330"
-                    fill="#A4AEC0"
-                    fontSize="8"
-                    fontFamily="JetBrains Mono"
-                  >
-                    RANK #12/284
-                  </text>
-                </svg>
+            )
+          })}
+
+          {PRINCIPLES.slice(2).map((principle) => {
+            const Icon = principle.icon
+            return (
+              <div
+                key={principle.title}
+                className="rounded-card border border-line bg-surface p-6 transition-colors hover:border-line-strong"
+              >
+                <Icon size={19} className="text-accent" aria-hidden />
+                <h3 className="mt-4 text-[15px] font-semibold text-ink">{principle.title}</h3>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2">{principle.body}</p>
               </div>
+            )
+          })}
+
+          <div className="relative overflow-hidden rounded-card border border-line lg:col-span-3">
+            <Image
+              src="https://picsum.photos/seed/coinx-settlement-ledger/1800/560?grayscale"
+              alt="A wide ledger of settled positions on a display"
+              width={1800}
+              height={560}
+              sizes="(max-width: 1024px) 100vw, 100vw"
+              className="h-full w-full object-cover"
+              style={{ minHeight: 190 }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  'linear-gradient(to right, rgba(8,9,11,0.95) 2%, rgba(8,9,11,0.6) 45%, rgba(8,9,11,0.12) 100%)',
+              }}
+            />
+            <div className="absolute inset-y-0 left-0 flex max-w-[40ch] flex-col justify-center px-6 sm:px-8">
+              <span className="mb-3 flex size-9 items-center justify-center rounded-control border border-line bg-void/70">
+                <Timer size={15} className="text-accent" aria-hidden />
+              </span>
+              <h3 className="text-[15px] font-semibold text-ink">Settlement in one pass</h3>
+              <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2">
+                When the clock stops, every open position is closed at the closing mark and payouts
+                are credited by tier. Nothing is settled by hand.
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="py-20 relative" style={{ background: "#080D18" }}>
-        <div className="max-w-7xl mx-auto px-8">
-          <div className="text-center mb-12">
-            <div
-              className="text-xs font-semibold tracking-widest mb-3"
-              style={{ color: "#00C8FF" }}
-            >
-              ENTER NOW
+      {/* Leaderboard table beside a plain rules disclosure. Two more families. */}
+      <section className="border-y border-line bg-surface/40 py-20">
+        <div className="mx-auto max-w-[1440px] px-6">
+          <div className="flex flex-wrap items-end justify-between gap-6">
+            <div>
+              <h2 className="text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+                The board as it stands
+              </h2>
+              <p className="mt-4 max-w-[54ch] text-[15px] leading-relaxed text-ink-2">
+                A settled round ranked on percent return. The payout tier sits beside each place, so
+                the gap between a good round and a great one is visible at a glance.
+              </p>
             </div>
-            <h2
-              className="font-black text-4xl tracking-tight"
-              style={{ color: "#FFFFFF" }}
-            >
-              UPCOMING COMPETITIONS
-            </h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-5">
-            {COMPETITIONS.slice(0, 3).map((c) => (
-              <CompetitionCard key={c.id} comp={c} />
-            ))}
-          </div>
-          <div className="text-center mt-8">
-            <Link
-              href={ROUTES.competitions}
-              className="btn-ghost px-8 py-3 rounded-xl text-sm"
-            >
-              View All Competitions →
+            <Link href={ROUTES.leaderboard} className="btn btn-secondary px-4 py-2.5">
+              Open the live board
+              <ArrowRight size={13} aria-hidden />
             </Link>
           </div>
-        </div>
-      </section>
 
-      <section className="py-20" style={{ background: "#0C1320" }}>
-        <div className="max-w-7xl mx-auto px-8">
-          <div className="text-center mb-14">
-            <h2
-              className="font-black text-4xl tracking-tight"
-              style={{ color: "#FFFFFF" }}
-            >
-              HOW IT WORKS
-            </h2>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            {STEPS.map((step, i) => (
-              <div key={i} className="text-center relative">
-                {i < 5 && (
-                  <div
-                    className="hidden md:block absolute top-8 left-full w-full h-px"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, rgba(0,200,255,0.3), transparent)",
-                    }}
-                  />
-                )}
-                <div
-                  className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-3 text-2xl"
-                  style={{
-                    background: "rgba(22,119,255,0.1)",
-                    border: "1px solid rgba(0,200,255,0.15)",
-                  }}
-                >
-                  {step.icon}
-                </div>
-                <div
-                  className="text-xs font-mono mb-1"
-                  style={{ color: "#00C8FF" }}
-                >
-                  {step.n}
-                </div>
-                <div className="font-bold text-sm" style={{ color: "#E5EAF3" }}>
-                  {step.label}
-                </div>
+          <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+            <div className="panel overflow-hidden">
+              <LeaderboardTable data={LEADERBOARD_DATA.slice(0, 8)} />
+            </div>
+
+            <div className="flex flex-col gap-8">
+              <div>
+                <p className="label">Round rules</p>
+                <dl className="mt-4 flex flex-col">
+                  {RULES.map(([label, value]) => (
+                    <div key={label} className="border-b border-line py-3 last:border-b-0">
+                      <dt className="text-[12.5px] text-ink-3">{label}</dt>
+                      <dd className="mt-1 text-[13.5px] leading-relaxed text-ink-2">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      <section className="py-20" style={{ background: "#080D18" }}>
-        <div className="max-w-7xl mx-auto px-8">
-          <div className="text-center mb-14">
-            <h2
-              className="font-black text-4xl tracking-tight"
-              style={{ color: "#FFFFFF" }}
-            >
-              WHY COINX
-            </h2>
-          </div>
-          <div className="grid md:grid-cols-5 gap-4">
-            {FEATURES.map((f, i) => (
-              <div
-                key={i}
-                className="glass rounded-2xl p-5 card-hover text-center"
-              >
-                <div className="text-3xl mb-3">{f.icon}</div>
-                <div
-                  className="font-bold text-sm mb-2"
-                  style={{ color: "#E5EAF3" }}
-                >
-                  {f.title}
-                </div>
-                <div
-                  className="text-xs leading-relaxed"
-                  style={{ color: "#A4AEC0" }}
-                >
-                  {f.desc}
-                </div>
+              <div className="rounded-card border border-warn/25 bg-warn/6 p-5">
+                <p className="text-[13px] font-semibold text-warn">Simulated balances</p>
+                <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
+                  Round capital is a simulated balance settled against live market prices. Orders
+                  placed inside a round never reach a real exchange book.
+                </p>
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </section>
 
-      <footer
-        className="py-12"
-        style={{
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          background: "#080D18",
-        }}
-      >
-        <div className="max-w-7xl mx-auto px-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <Link href={ROUTES.landing}>
-            <Image
-              src="/coinx-logo-long.png"
-              alt="COINX"
-              width={110}
-              height={20}
-              style={{ width: "110px", height: "auto" }}
-            />
+      {/* Closing band. Reuses the single signup intent, no new CTA label. */}
+      <section className="mx-auto max-w-[1440px] px-6 py-24">
+        <div className="flex flex-col items-start gap-8 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <Trophy size={22} className="text-accent" aria-hidden />
+            <h2 className="mt-5 max-w-[20ch] text-3xl leading-tight font-semibold tracking-tight text-ink md:text-4xl">
+              Your first round is three clicks away.
+            </h2>
+            <p className="mt-4 max-w-[50ch] text-[15px] leading-relaxed text-ink-2">
+              Create an account, fund the wallet, then enter a round that is already taking
+              entrants. Entries close when the timer starts.
+            </p>
+          </div>
+          <Link href={ROUTES.register} className="btn btn-primary shrink-0 px-6 py-3.5">
+            Create account
           </Link>
-          <div
-            className="flex items-center gap-6 text-xs"
-            style={{ color: "#A4AEC0" }}
-          >
-            {["Terms", "Privacy", "Support", "API"].map((l) => (
-              <a
-                key={l}
-                href="#"
-                className="hover:text-white transition-colors"
-              >
-                {l}
-              </a>
-            ))}
-          </div>
-          <div className="text-xs" style={{ color: "#A4AEC0" }}>
-            © 2026 CoinX. All rights reserved.
-          </div>
         </div>
-      </footer>
+      </section>
+
+      <SiteFooter />
     </div>
   )
 }

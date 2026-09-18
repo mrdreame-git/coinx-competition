@@ -70,7 +70,7 @@ export const WALLET_BALANCE = "1,250.00"
 export const DEPOSIT_ADDRESS = "TGsXJxNR7oo3PV4TxwM2N8Vfkwxe3GmfFx"
 
 export const NETWORKS = [
-  { value: "TRC20", label: "USDT — TRC20 (Tron)" },
-  { value: "ERC20", label: "USDT — ERC20 (Ethereum)" },
-  { value: "BSC", label: "USDT — BSC (BNB Chain)" },
+  { value: "TRC20", label: "USDT on TRC20 (Tron)" },
+  { value: "ERC20", label: "USDT on ERC20 (Ethereum)" },
+  { value: "BSC", label: "USDT on BSC (BNB Chain)" },
 ]

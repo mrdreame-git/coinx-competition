@@ -1,392 +1,462 @@
-"use client"
+'use client'
 
-import { useState } from "react"
-import Header from "@/components/layout/Header"
+import { useMemo, useState } from 'react'
 import {
-  TRANSACTIONS,
+  Check,
+  Copy,
+  DownloadSimple,
+  ShieldWarning,
+  UploadSimple,
+  WarningCircle,
+} from '@phosphor-icons/react'
+import {
   ASSETS,
-  WALLET_BALANCE,
   DEPOSIT_ADDRESS,
   NETWORKS,
-} from "@/mocks/wallet"
-import type { TransactionType } from "@/types/wallet"
+  TRANSACTIONS,
+  WALLET_BALANCE,
+} from '@/mocks/wallet'
+import { useLiveTickers } from '@/lib/binance/hooks'
+import { formatNumber, formatPrice, formatUsd, truncateMiddle } from '@/lib/format'
+import type { TransactionType } from '@/types/wallet'
+import Header from '@/components/layout/Header'
+import { EmptyState } from '@/components/common/StatePanel'
 
-type WalletTab = "deposit" | "withdraw"
+type WalletTab = 'deposit' | 'withdraw'
 
-const TX_FILTERS: ("all" | TransactionType)[] = [
-  "all",
-  "deposit",
-  "withdrawal",
-  "entry",
-  "prize",
+const TX_FILTERS: { key: 'all' | TransactionType; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'deposit', label: 'Deposits' },
+  { key: 'withdrawal', label: 'Withdrawals' },
+  { key: 'entry', label: 'Entry fees' },
+  { key: 'prize', label: 'Prizes' },
 ]
 
+const WITHDRAW_FEE = 2
+const MIN_WITHDRAWAL = 20
+
 export default function WalletPage() {
-  const [tab, setTab] = useState<WalletTab>("deposit")
-  const [network, setNetwork] = useState("TRC20")
-  const [txFilter, setTxFilter] = useState<"all" | TransactionType>("all")
-  const filtered =
-    txFilter === "all"
+  const { byBase } = useLiveTickers()
+
+  const [tab, setTab] = useState<WalletTab>('deposit')
+  const [network, setNetwork] = useState('TRC20')
+  const [txFilter, setTxFilter] = useState<'all' | TransactionType>('all')
+  const [copied, setCopied] = useState(false)
+  const [amount, setAmount] = useState('500')
+  const [address, setAddress] = useState('')
+
+  const balance = Number.parseFloat(WALLET_BALANCE.replace(/,/g, ''))
+
+  /** Valuations come from live prices, so the asset list moves with the market. */
+  const holdings = useMemo(
+    () =>
+      ASSETS.map((asset) => {
+        const quantity = Number.parseFloat(asset.amount.replace(/,/g, ''))
+        if (asset.coin === 'USDT') {
+          return { ...asset, quantity, price: 1, value: quantity }
+        }
+        const ticker = byBase.get(asset.coin)
+        const price = ticker?.price ?? 0
+        return { ...asset, quantity, price, value: quantity * price }
+      }),
+    [byBase],
+  )
+
+  const holdingsTotal = holdings.reduce((sum, asset) => sum + asset.value, 0)
+  const filteredTransactions =
+    txFilter === 'all'
       ? TRANSACTIONS
-      : TRANSACTIONS.filter((t) => t.type === txFilter)
+      : TRANSACTIONS.filter((transaction) => transaction.type === txFilter)
+
+  const numericAmount = Number.parseFloat(amount || '0')
+  const amountValid = Number.isFinite(numericAmount) && numericAmount >= MIN_WITHDRAWAL
+  const addressValid = /^(0x[a-fA-F0-9]{40}|T[A-Za-z1-9]{33})$/.test(address.trim())
+  const receives = Math.max(numericAmount - WITHDRAW_FEE, 0)
+  const withdrawExceedsBalance = numericAmount > balance
+
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(DEPOSIT_ADDRESS)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   return (
-    <div className="min-h-screen" style={{ background: "#080D18" }}>
+    <div className="min-h-[100dvh] bg-void">
       <Header />
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <h1 className="font-black text-3xl mb-8" style={{ color: "#FFFFFF" }}>
-          WALLET
-        </h1>
-        <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-5">
-            <div className="glass-blue rounded-2xl p-6 glow-blue">
-              <div
-                className="text-xs font-semibold mb-1"
-                style={{ color: "#A4AEC0" }}
-              >
-                TOTAL BALANCE
-              </div>
-              <div
-                className="font-black text-4xl font-mono"
-                style={{ color: "#FFFFFF" }}
-              >
-                {WALLET_BALANCE}
-              </div>
-              <div
-                className="font-mono text-base mb-6"
-                style={{ color: "#A4AEC0" }}
-              >
-                USDT
-              </div>
-              <div className="space-y-2">
-                <button
-                  onClick={() => setTab("deposit")}
-                  className="btn-primary w-full py-3 rounded-xl text-sm"
-                >
-                  DEPOSIT
-                </button>
-                <button
-                  onClick={() => setTab("withdraw")}
-                  className="btn-ghost w-full py-3 rounded-xl text-sm"
-                >
-                  WITHDRAW
-                </button>
-              </div>
-            </div>
 
-            <div className="glass rounded-2xl p-5">
-              <div
-                className="text-xs font-semibold mb-4"
-                style={{ color: "#A4AEC0" }}
-              >
-                ASSETS
-              </div>
-              {ASSETS.map((a) => (
-                <div
-                  key={a.coin}
-                  className="flex items-center gap-3 py-3"
-                  style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
-                >
-                  <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs"
+      <main className="mx-auto max-w-[1200px] px-4 py-8 lg:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div>
+            <p className="label">Simulated account balance</p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-ink md:text-4xl">
+              Wallet
+            </h1>
+          </div>
+          <dl className="flex divide-x divide-line">
+            <div className="px-5 first:pl-0">
+              <dt className="label">Cash</dt>
+              <dd className="num mt-2 text-[19px] font-semibold text-ink">
+                {formatNumber(balance, 2)} USDT
+              </dd>
+            </div>
+            <div className="px-5 last:pr-0">
+              <dt className="label">Total holdings</dt>
+              <dd className="num mt-2 text-[19px] font-semibold text-ink">
+                {holdingsTotal ? formatUsd(holdingsTotal) : '...'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+          {/* Transfer panel */}
+          <div className="panel overflow-hidden">
+            <div role="tablist" aria-label="Transfer type" className="flex border-b border-line">
+              {(['deposit', 'withdraw'] as WalletTab[]).map((option) => {
+                const selected = option === tab
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setTab(option)}
+                    className="flex flex-1 items-center justify-center gap-2 py-3.5 text-[13px] font-medium capitalize transition-colors"
                     style={{
-                      background: "linear-gradient(135deg, #1677FF, #6D4AFF)",
-                      color: "white",
+                      color: selected ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                      backgroundColor: selected ? 'var(--color-accent-soft)' : 'transparent',
+                      borderBottom: selected ? '2px solid var(--color-accent-deep)' : '2px solid transparent',
                     }}
                   >
-                    {a.coin[0]}
+                    {option === 'deposit' ? (
+                      <DownloadSimple size={13} aria-hidden />
+                    ) : (
+                      <UploadSimple size={13} aria-hidden />
+                    )}
+                    {option}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="p-6">
+              <div>
+                <label className="label" htmlFor="network">
+                  Network
+                </label>
+                <select
+                  id="network"
+                  value={network}
+                  onChange={(event) => setNetwork(event.target.value)}
+                  className="field mt-2"
+                >
+                  {NETWORKS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-[11.5px] text-ink-3">
+                  The network must match the one you send from. USDT sent on the wrong chain is not
+                  recoverable.
+                </p>
+              </div>
+
+              {tab === 'deposit' ? (
+                <div className="mt-6">
+                  <label className="label" htmlFor="deposit-address">
+                    Deposit address
+                  </label>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      id="deposit-address"
+                      readOnly
+                      value={DEPOSIT_ADDRESS}
+                      className="field num flex-1 text-[12px]"
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                    <button
+                      type="button"
+                      onClick={copyAddress}
+                      className="btn btn-secondary shrink-0 px-4"
+                      aria-label="Copy deposit address"
+                    >
+                      {copied ? (
+                        <>
+                          <Check size={13} aria-hidden />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={13} aria-hidden />
+                          Copy
+                        </>
+                      )}
+                    </button>
                   </div>
-                  <div className="flex-1">
-                    <div
-                      className="text-sm font-bold"
-                      style={{ color: "#E5EAF3" }}
-                    >
-                      {a.coin}
+                  <p className="num mt-2 text-[11px] text-ink-3">
+                    {truncateMiddle(DEPOSIT_ADDRESS, 12, 10)} · {network}
+                  </p>
+
+                  <div className="mt-6 grid gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-2">
+                    <div className="bg-surface px-4 py-3.5">
+                      <p className="label">Minimum deposit</p>
+                      <p className="num mt-2 text-[14px] text-ink">10 USDT</p>
                     </div>
-                    <div className="text-xs" style={{ color: "#A4AEC0" }}>
-                      {a.name}
+                    <div className="bg-surface px-4 py-3.5">
+                      <p className="label">Credited after</p>
+                      <p className="num mt-2 text-[14px] text-ink">2 confirmations</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div
-                      className="text-sm font-mono font-bold"
-                      style={{ color: "#E5EAF3" }}
-                    >
-                      {a.amount}
-                    </div>
-                    <div
-                      className="text-xs font-mono"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      {a.usd}
-                    </div>
+
+                  <div className="mt-5 flex items-start gap-2.5 rounded-control border border-warn/25 bg-warn/6 px-3.5 py-3">
+                    <ShieldWarning size={14} className="mt-0.5 shrink-0 text-warn" aria-hidden />
+                    <p className="text-[11.5px] leading-relaxed text-ink-2">
+                      Send USDT only, and only on the {network} network. Deposits of other assets,
+                      or of USDT on a different chain, are not credited.
+                    </p>
                   </div>
                 </div>
-              ))}
+              ) : (
+                <div className="mt-6 flex flex-col gap-5">
+                  <div>
+                    <label className="label" htmlFor="withdraw-address">
+                      Destination address
+                    </label>
+                    <input
+                      id="withdraw-address"
+                      value={address}
+                      onChange={(event) => setAddress(event.target.value)}
+                      placeholder="0x... or T..."
+                      aria-invalid={address.length > 0 && !addressValid}
+                      className="field num mt-2 text-[12px]"
+                    />
+                    {address.length > 0 && !addressValid && (
+                      <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-short">
+                        <WarningCircle size={12} aria-hidden />
+                        That does not look like an EVM or Tron address.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="label" htmlFor="withdraw-amount">
+                        Amount
+                      </label>
+                      <span className="num text-[11.5px] text-ink-3">
+                        Available {formatNumber(balance, 2)} USDT
+                      </span>
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        id="withdraw-amount"
+                        inputMode="decimal"
+                        value={amount}
+                        onChange={(event) => setAmount(event.target.value)}
+                        className="field num flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setAmount(String(balance))}
+                        className="btn btn-secondary shrink-0 px-4"
+                      >
+                        Max
+                      </button>
+                    </div>
+                    {withdrawExceedsBalance && (
+                      <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-short">
+                        <WarningCircle size={12} aria-hidden />
+                        That is more than your available balance.
+                      </p>
+                    )}
+                    {!withdrawExceedsBalance && amountValid && (
+                      <p className="mt-2 text-[11.5px] text-ink-3">
+                        Minimum withdrawal is {MIN_WITHDRAWAL} USDT.
+                      </p>
+                    )}
+                  </div>
+
+                  <dl className="flex flex-col gap-2.5 rounded-card border border-line bg-surface-2/50 px-4 py-4">
+                    {[
+                      ['Network fee', `${WITHDRAW_FEE} USDT`],
+                      ['You receive', `${formatNumber(receives, 2)} USDT`],
+                      ['Balance after', `${formatNumber(Math.max(balance - numericAmount, 0), 2)} USDT`],
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <dt className="text-[12.5px] text-ink-3">{label}</dt>
+                        <dd
+                          className="num text-[12.5px]"
+                          style={{
+                            color: label === 'You receive' ? 'var(--color-long)' : 'var(--color-ink)',
+                          }}
+                        >
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+
+                  <button
+                    type="button"
+                    disabled={!addressValid || !amountValid || withdrawExceedsBalance}
+                    className="btn btn-primary w-full py-3"
+                  >
+                    Request withdrawal
+                  </button>
+                  <p className="text-[11.5px] leading-relaxed text-ink-3">
+                    Withdrawals from a competition balance are reviewed before broadcast. Requests
+                    placed after 18:00 UTC settle on the next working day.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="lg:col-span-2 space-y-5">
-            <div className="glass rounded-2xl p-6">
-              <div
-                className="flex rounded-xl overflow-hidden mb-6"
-                style={{ border: "1px solid rgba(255,255,255,0.08)" }}
-              >
-                {(["deposit", "withdraw"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTab(t)}
-                    className={`flex-1 py-3 text-sm font-bold uppercase tracking-wide transition-all ${
-                      tab === t ? "tab-active" : "text-gray-500"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+          {/* Holdings */}
+          <div className="flex flex-col gap-6">
+            <div className="panel overflow-hidden">
+              <div className="border-b border-line px-5 py-3">
+                <h2 className="text-[14px] font-semibold text-ink">Holdings</h2>
               </div>
-
-              {tab === "deposit" ? (
-                <div className="space-y-5">
-                  <div>
-                    <label
-                      className="text-xs font-semibold mb-1.5 block"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      NETWORK
-                    </label>
-                    <select
-                      value={network}
-                      onChange={(e) => setNetwork(e.target.value)}
-                      className="input-field w-full px-4 py-3 rounded-xl text-sm"
-                    >
-                      {NETWORKS.map((n) => (
-                        <option key={n.value} value={n.value}>
-                          {n.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div
-                    className="rounded-xl p-4"
-                    style={{
-                      background: "rgba(255,176,32,0.05)",
-                      border: "1px solid rgba(255,176,32,0.2)",
-                    }}
+              <ul>
+                {holdings.map((asset) => (
+                  <li
+                    key={asset.coin}
+                    className="flex items-center gap-3 border-b border-line px-5 py-3.5 last:border-b-0"
                   >
-                    <div className="text-xs" style={{ color: "#FFB020" }}>
-                      ⚠ Only send USDT through the selected network. Sending
-                      other assets may result in permanent loss.
-                    </div>
-                  </div>
-                  <div>
-                    <label
-                      className="text-xs font-semibold mb-1.5 block"
-                      style={{ color: "#A4AEC0" }}
+                    <span
+                      className="flex size-9 shrink-0 items-center justify-center rounded-control text-[12px] font-semibold text-white"
+                      style={{ backgroundColor: 'var(--color-accent-deep)' }}
                     >
-                      DEPOSIT ADDRESS
-                    </label>
-                    <div className="flex gap-2">
-                      <div
-                        className="flex-1 px-4 py-3 rounded-xl font-mono text-xs truncate"
-                        style={{
-                          background: "rgba(255,255,255,0.04)",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          color: "#A4AEC0",
-                        }}
-                      >
-                        {DEPOSIT_ADDRESS}
-                      </div>
-                      <button className="btn-primary px-4 py-3 rounded-xl text-xs font-bold">
-                        COPY
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    className="flex items-center justify-center py-6 rounded-xl"
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                    }}
-                  >
-                    <div
-                      className="w-32 h-32 rounded-xl flex items-center justify-center"
-                      style={{ background: "white", padding: 8 }}
-                    >
-                      <svg
-                        viewBox="0 0 21 21"
-                        width="128"
-                        height="128"
-                        aria-label="Deposit QR code"
-                      >
-                        {Array.from({ length: 21 }, (_, row) =>
-                          Array.from({ length: 21 }, (_, col) => {
-                            const noise = Math.sin(col * 12.9898 + row * 78.233) * 43758.5453
-                            const dark =
-                              (row < 9 && col < 9) ||
-                              (row < 9 && col > 11) ||
-                              (row > 11 && col < 9) ||
-                              noise - Math.floor(noise) > 0.5
-                            return dark ? (
-                              <rect
-                                key={`${row}-${col}`}
-                                x={col}
-                                y={row}
-                                width="1"
-                                height="1"
-                                fill="#000"
-                              />
-                            ) : null
-                          }),
-                        )}
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div>
-                    <label
-                      className="text-xs font-semibold mb-1.5 block"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      NETWORK
-                    </label>
-                    <select className="input-field w-full px-4 py-3 rounded-xl text-sm">
-                      <option>USDT — BSC (BNB Chain)</option>
-                      <option>USDT — TRC20 (Tron)</option>
-                      <option>USDT — ERC20 (Ethereum)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      className="text-xs font-semibold mb-1.5 block"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      WALLET ADDRESS
-                    </label>
-                    <input
-                      className="input-field w-full px-4 py-3 rounded-xl text-sm font-mono"
-                      placeholder="0x..."
-                    />
-                  </div>
-                  <div>
-                    <label
-                      className="text-xs font-semibold mb-1.5 block"
-                      style={{ color: "#A4AEC0" }}
-                    >
-                      AMOUNT (USDT)
-                    </label>
-                    <input
-                      className="input-field w-full px-4 py-3 rounded-xl text-sm font-mono"
-                      placeholder="500"
-                      defaultValue="500"
-                    />
-                  </div>
-                  <div
-                    className="rounded-xl p-4 space-y-2"
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                    }}
-                  >
-                    {[
-                      ["Network Fee", "2 USDT"],
-                      ["You Receive", "498 USDT"],
-                    ].map(([l, v]) => (
-                      <div key={l} className="flex justify-between text-sm">
-                        <span style={{ color: "#A4AEC0" }}>{l}</span>
-                        <span
-                          className="font-mono font-bold"
-                          style={{
-                            color: l === "You Receive" ? "#00D084" : "#E5EAF3",
-                          }}
-                        >
-                          {v}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <button className="btn-primary w-full py-3.5 rounded-xl text-sm font-bold">
-                    CONFIRM WITHDRAWAL
-                  </button>
-                </div>
-              )}
+                      {asset.coin.slice(0, 2)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-semibold text-ink">{asset.coin}</span>
+                      <span className="block text-[11.5px] text-ink-3">{asset.name}</span>
+                    </span>
+                    <span className="text-right">
+                      <span className="num block text-[13px] text-ink">
+                        {formatNumber(asset.quantity, asset.coin === 'USDT' ? 2 : 4)}
+                      </span>
+                      <span className="num block text-[11.5px] text-ink-3">
+                        {asset.price ? formatUsd(asset.value) : 'awaiting price'}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-center justify-between border-t border-line px-5 py-3.5">
+                <span className="text-[12.5px] text-ink-3">Total</span>
+                <span className="num text-[13px] font-semibold text-ink">
+                  {holdingsTotal ? formatUsd(holdingsTotal) : '...'}
+                </span>
+              </div>
             </div>
 
-            <div className="glass rounded-2xl p-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
-                <div className="font-bold text-sm" style={{ color: "#FFFFFF" }}>
-                  TRANSACTION HISTORY
-                </div>
-                <div className="flex gap-1 flex-wrap">
-                  {TX_FILTERS.map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setTxFilter(f)}
-                      className={`px-2.5 py-1 rounded-lg text-xs capitalize transition-all ${
-                        txFilter === f ? "tab-active" : "btn-ghost"
-                      }`}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {filtered.length === 0 ? (
-                <div
-                  className="text-center py-8 text-sm"
-                  style={{ color: "#A4AEC0" }}
-                >
-                  No transactions found.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filtered.map((tx) => (
-                    <div
-                      key={tx.id}
-                      className="flex items-center gap-3 py-2.5"
-                      style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      }}
-                    >
-                      <div
-                        className="w-8 h-8 rounded-xl flex items-center justify-center"
-                        style={{
-                          background: tx.positive
-                            ? "rgba(0,208,132,0.1)"
-                            : "rgba(255,77,103,0.1)",
-                        }}
-                      >
-                        <span className="text-xs">
-                          {tx.positive ? "↑" : "↓"}
-                        </span>
-                      </div>
-                      <div className="flex-1">
-                        <div
-                          className="text-sm font-medium"
-                          style={{ color: "#E5EAF3" }}
-                        >
-                          {tx.label}
-                        </div>
-                        <div className="text-xs" style={{ color: "#A4AEC0" }}>
-                          {tx.time}
-                        </div>
-                      </div>
-                      <div
-                        className="font-mono text-sm font-bold"
-                        style={{ color: tx.positive ? "#00D084" : "#FF4D67" }}
-                      >
-                        {tx.positive ? "+" : ""}
-                        {tx.amount} USDT
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="rounded-card border border-line bg-surface p-5">
+              <p className="text-[13px] font-semibold text-ink">What this balance is</p>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-ink-2">
+                Competition capital is simulated. Coin valuations beside each holding are priced
+                live from Binance, so the totals move with the market even though the balance itself
+                is a platform figure.
+              </p>
             </div>
           </div>
         </div>
-      </div>
+
+        {/* History */}
+        <section className="mt-8">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h2 className="text-[15px] font-semibold text-ink">Transaction history</h2>
+            <div role="tablist" aria-label="Filter transactions" className="flex flex-wrap gap-1.5">
+              {TX_FILTERS.map((filter) => {
+                const selected = txFilter === filter.key
+                return (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setTxFilter(filter.key)}
+                    className="rounded-control px-3 py-2 text-[12px] font-medium transition-colors"
+                    style={{
+                      color: selected ? 'var(--color-accent)' : 'var(--color-ink-3)',
+                      backgroundColor: selected ? 'var(--color-accent-soft)' : 'transparent',
+                    }}
+                  >
+                    {filter.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="panel mt-4 overflow-hidden">
+            {filteredTransactions.length === 0 ? (
+              <EmptyState
+                title="Nothing in this category"
+                body="Once a transfer, entry fee or prize lands in this category it will be listed here with its amount and timestamp."
+              />
+            ) : (
+              <>
+                <div
+                  className="hidden items-center gap-4 border-b border-line bg-surface-2/60 px-5 py-2.5 sm:grid"
+                  style={{ gridTemplateColumns: 'minmax(0,1.6fr) 130px 130px 130px' }}
+                >
+                  <span className="label">Entry</span>
+                  <span className="label">Type</span>
+                  <span className="label">When</span>
+                  <span className="label text-right">Amount</span>
+                </div>
+                {filteredTransactions.map((transaction) => (
+                  <div
+                    key={transaction.id}
+                    className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5 last:border-b-0 sm:grid sm:gap-4"
+                    style={{ gridTemplateColumns: 'minmax(0,1.6fr) 130px 130px 130px' }}
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-3">
+                      <span
+                        className="flex size-8 shrink-0 items-center justify-center rounded-control border"
+                        style={{
+                          borderColor: transaction.positive
+                            ? 'rgba(52, 211, 153, 0.3)'
+                            : 'rgba(248, 113, 113, 0.3)',
+                          color: transaction.positive
+                            ? 'var(--color-long)'
+                            : 'var(--color-short)',
+                        }}
+                      >
+                        {transaction.positive ? (
+                          <DownloadSimple size={13} aria-hidden />
+                        ) : (
+                          <UploadSimple size={13} aria-hidden />
+                        )}
+                      </span>
+                      <span className="truncate text-[13px] text-ink">{transaction.label}</span>
+                    </span>
+                    <span className="text-[12px] text-ink-3 capitalize">{transaction.type}</span>
+                    <span className="num text-[12px] text-ink-3">{transaction.time}</span>
+                    <span
+                      className="num text-right text-[13px]"
+                      style={{
+                        color: transaction.positive ? 'var(--color-long)' : 'var(--color-short)',
+                      }}
+                    >
+                      {transaction.positive ? '+' : ''}
+                      {formatNumber(transaction.amount)} USDT
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </section>
+      </main>
     </div>
   )
 }

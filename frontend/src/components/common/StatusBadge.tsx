@@ -1,49 +1,43 @@
-import type { CompetitionStatus } from "@/types/competition"
+import { CheckCircle, Clock, Broadcast } from '@phosphor-icons/react/dist/ssr'
+import type { CompetitionStatus } from '@/types/competition'
 
-interface StatusBadgeProps {
-  status: CompetitionStatus
+const CONFIG: Record<
+  CompetitionStatus,
+  { label: string; icon: typeof Clock; fg: string; bg: string; border: string }
+> = {
+  live: {
+    label: 'Live now',
+    icon: Broadcast,
+    fg: 'var(--color-short)',
+    bg: 'rgba(248, 113, 113, 0.12)',
+    border: 'rgba(248, 113, 113, 0.32)',
+  },
+  upcoming: {
+    label: 'Upcoming',
+    icon: Clock,
+    fg: 'var(--color-accent)',
+    bg: 'rgba(95, 168, 255, 0.12)',
+    border: 'rgba(95, 168, 255, 0.3)',
+  },
+  finished: {
+    label: 'Settled',
+    icon: CheckCircle,
+    fg: 'var(--color-ink-2)',
+    bg: 'rgba(255, 255, 255, 0.04)',
+    border: 'var(--color-line-strong)',
+  },
 }
 
-export default function StatusBadge({ status }: StatusBadgeProps) {
-  if (status === "live") {
-    return (
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-        style={{
-          background: "rgba(255,77,103,0.12)",
-          color: "#FF4D67",
-          border: "1px solid rgba(255,77,103,0.25)",
-        }}
-      >
-        <div className="live-dot" />
-        LIVE
-      </div>
-    )
-  }
-  if (status === "upcoming") {
-    return (
-      <div
-        className="px-2.5 py-1 rounded-full text-xs font-semibold"
-        style={{
-          background: "rgba(22,119,255,0.12)",
-          color: "#00C8FF",
-          border: "1px solid rgba(0,200,255,0.2)",
-        }}
-      >
-        UPCOMING
-      </div>
-    )
-  }
+export default function StatusBadge({ status }: { status: CompetitionStatus }) {
+  const { label, icon: Icon, fg, bg, border } = CONFIG[status]
+
   return (
-    <div
-      className="px-2.5 py-1 rounded-full text-xs font-semibold"
-      style={{
-        background: "rgba(164,174,192,0.08)",
-        color: "#A4AEC0",
-        border: "1px solid rgba(164,174,192,0.15)",
-      }}
+    <span
+      className="pill"
+      style={{ color: fg, backgroundColor: bg, borderColor: border }}
     >
-      FINISHED
-    </div>
+      {status === 'live' ? <span className="live-pip" aria-hidden /> : <Icon size={11} weight="bold" aria-hidden />}
+      {label}
+    </span>
   )
 }
